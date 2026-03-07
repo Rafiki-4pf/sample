@@ -1,876 +1,480 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>PEAMS – Product Expiry Alert System</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js"></script>
-<style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-  :root {
-    --bg: #0A0D14;
-    --surface: #111520;
-    --surface2: #181E2E;
-    --surface3: #1F2840;
-    --border: #222B3E;
-    --text: #E2E8F0;
-    --muted: #556380;
-    --accent: #4F8EF7;
-    --expired: #FF2D55;
-    --critical: #FF6B35;
-    --warning: #FFD60A;
-    --safe: #30D158;
-  }
-  body { font-family: 'DM Mono', monospace; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
+import { useState, useEffect } from "react";
 
-  /* ── Loader ── */
-  #loader {
-    position: fixed; inset: 0; background: var(--bg); z-index: 999;
-    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px;
-  }
-  .loader-icon { font-size: 56px; animation: spin 2s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .loader-title { font-size: 22px; font-weight: 700; letter-spacing: 4px; color: var(--text); }
-  .loader-sub { font-size: 12px; color: var(--muted); letter-spacing: 2px; }
-  .loader-bar { width: 240px; height: 3px; background: var(--surface2); border-radius: 2px; overflow: hidden; }
-  .loader-fill { height: 100%; background: var(--accent); animation: load 2s ease-in-out infinite; border-radius: 2px; }
-  @keyframes load { 0%{width:0%} 60%{width:80%} 100%{width:100%} }
+// ── Constants ──────────────────────────────────────────────
+const CATEGORIES = ["Food & Beverage", "Medicine", "Cosmetics", "Electronics", "Other"];
+const THRESHOLDS = [7, 14, 30, 60, 90];
 
-  /* ── Layout ── */
-  #app { display: none; flex: 1; flex-direction: row; }
-  #app.ready { display: flex; animation: fadeIn 0.4s ease; }
-  @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
-
-  aside {
-    width: 240px; min-height: 100vh; background: var(--surface);
-    border-right: 1px solid var(--border); display: flex; flex-direction: column;
-    padding: 24px 14px; gap: 6px; flex-shrink: 0;
-  }
-  .logo { display: flex; align-items: center; gap: 12px; padding: 10px; margin-bottom: 20px; }
-  .logo-icon { font-size: 30px; }
-  .logo-text { font-size: 15px; font-weight: 700; letter-spacing: 3px; }
-  .logo-sub { font-size: 9px; color: var(--muted); letter-spacing: 2px; margin-top: 2px; }
-
-  .nav-btn {
-    display: flex; align-items: center; gap: 10px; padding: 10px 14px;
-    border-radius: 8px; border: none; background: transparent; color: var(--muted);
-    font-size: 13px; cursor: pointer; text-align: left; letter-spacing: 0.5px;
-    font-family: 'DM Mono', monospace; transition: all 0.15s; width: 100%;
-  }
-  .nav-btn:hover { background: var(--surface2); color: var(--text); }
-  .nav-btn.active { background: var(--surface2); color: var(--text); font-weight: 600; }
-  .nav-icon { font-size: 16px; }
-
-  .sidebar-section-title {
-    font-size: 9px; color: var(--muted); letter-spacing: 2px;
-    text-transform: uppercase; padding: 4px 10px; margin-top: 20px; margin-bottom: 6px;
-  }
-  .alert-row {
-    display: flex; align-items: center; gap: 8px; padding: 8px 10px;
-    border-radius: 6px; border: none; background: transparent; cursor: pointer;
-    width: 100%; transition: background 0.1s; font-family: 'DM Mono', monospace;
-  }
-  .alert-row:hover { background: var(--surface2); }
-  .alert-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-  .alert-label { flex: 1; font-size: 12px; color: var(--muted); text-align: left; }
-  .alert-count { font-size: 14px; font-weight: 700; }
-
-  .add-btn {
-    margin-top: auto; padding: 12px; border-radius: 10px;
-    border: 1px solid var(--accent); background: rgba(79,142,247,0.12);
-    color: var(--accent); font-size: 13px; font-weight: 600; cursor: pointer;
-    letter-spacing: 0.5px; transition: all 0.2s; font-family: 'DM Mono', monospace;
-  }
-  .add-btn:hover { background: rgba(79,142,247,0.25); transform: translateY(-1px); }
-
-  .py-badge {
-    margin-top: 12px; padding: 8px 12px; border-radius: 8px;
-    background: rgba(255,214,10,0.08); border: 1px solid rgba(255,214,10,0.2);
-    font-size: 10px; color: #FFD60A; letter-spacing: 1px; text-align: center;
-  }
-
-  /* ── Main ── */
-  main { flex: 1; overflow: auto; }
-  .page { padding: 36px 44px; max-width: 1180px; }
-
-  .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 36px; }
-  .page-title { font-size: 26px; font-weight: 700; letter-spacing: -0.5px; }
-  .page-subtitle { font-size: 12px; color: var(--muted); margin-top: 6px; letter-spacing: 0.5px; }
-
-  /* ── Stats ── */
-  .stats-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px; margin-bottom: 40px; }
-  .stat-card {
-    background: var(--surface); border: 1px solid; border-radius: 12px;
-    padding: 20px 16px; display: flex; flex-direction: column; gap: 8px;
-    cursor: pointer; transition: transform 0.15s;
-  }
-  .stat-card:hover { transform: translateY(-2px); }
-  .stat-icon { font-size: 20px; }
-  .stat-value { font-size: 34px; font-weight: 700; line-height: 1; }
-  .stat-label { font-size: 10px; color: var(--muted); letter-spacing: 1.5px; text-transform: uppercase; }
-  .stat-bar { height: 4px; border-radius: 2px; margin-top: 4px; }
-  .stat-fill { height: 100%; border-radius: 2px; transition: width 0.6s ease; }
-
-  /* ── Table ── */
-  .section-title { font-size: 11px; font-weight: 600; letter-spacing: 2px; color: var(--muted); text-transform: uppercase; margin: 0 0 14px 0; }
-  .table-wrap { background: var(--surface); border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
-  table { width: 100%; border-collapse: collapse; }
-  th { padding: 12px 16px; text-align: left; font-size: 10px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; background: var(--surface2); font-weight: 600; }
-  tr.data-row { cursor: pointer; border-top: 1px solid var(--border); transition: background 0.1s; }
-  tr.data-row:hover { background: rgba(255,255,255,0.025); }
-  td { padding: 12px 16px; font-size: 13px; }
-
-  .cat-badge { background: var(--surface2); padding: 3px 8px; border-radius: 4px; font-size: 11px; color: var(--muted); }
-  .days-chip { padding: 3px 10px; border-radius: 100px; font-size: 12px; font-weight: 600; }
-  .status-badge { padding: 4px 10px; border-radius: 6px; font-size: 11px; font-weight: 600; border: 1px solid; white-space: nowrap; }
-
-  /* ── Controls ── */
-  .controls { display: flex; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; align-items: center; }
-  .search-input {
-    padding: 10px 16px; border-radius: 8px; border: 1px solid var(--border);
-    background: var(--surface); color: var(--text); font-size: 13px;
-    flex: 1; min-width: 180px; outline: none; font-family: 'DM Mono', monospace;
-  }
-  .search-input:focus { border-color: var(--accent); }
-  .filter-group { display: flex; gap: 5px; flex-wrap: wrap; }
-  .filter-btn {
-    padding: 8px 14px; border-radius: 6px; border: 1px solid var(--border);
-    background: var(--surface); color: var(--muted); font-size: 11px;
-    cursor: pointer; font-family: 'DM Mono', monospace; transition: all 0.15s; letter-spacing: 0.5px;
-  }
-  .filter-btn.active { color: #fff; border-color: transparent; }
-  .sort-select {
-    padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
-    background: var(--surface); color: var(--text); font-size: 12px;
-    cursor: pointer; font-family: 'DM Mono', monospace; outline: none;
-  }
-  .sort-select option { background: var(--surface2); }
-
-  /* ── List layout ── */
-  .list-layout { display: flex; gap: 18px; }
-  .product-list { flex: 1; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-  .product-card {
-    border: 1px solid; border-radius: 10px; background: var(--surface);
-    cursor: pointer; display: flex; overflow: hidden; transition: all 0.15s;
-  }
-  .product-card:hover { transform: translateY(-1px); box-shadow: 0 6px 24px rgba(0,0,0,0.35); }
-  .product-card.selected { border-color: var(--accent) !important; background: rgba(79,142,247,0.06); }
-  .card-accent { width: 4px; flex-shrink: 0; }
-  .card-body { flex: 1; padding: 14px 16px; }
-  .card-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
-  .card-name { font-weight: 600; font-size: 14px; margin-bottom: 3px; }
-  .card-cat { font-size: 11px; color: var(--muted); }
-  .card-bottom { display: flex; justify-content: space-between; align-items: center; }
-  .card-date { font-size: 11px; color: var(--muted); }
-  .empty { color: var(--muted); text-align: center; padding: 60px; font-size: 14px; }
-
-  /* ── Detail Panel ── */
-  .detail-panel {
-    width: 300px; flex-shrink: 0; background: var(--surface); border-radius: 14px;
-    border: 1px solid var(--border); padding: 24px; display: flex;
-    flex-direction: column; gap: 20px; align-self: flex-start; position: sticky; top: 0;
-  }
-  .detail-header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 16px; border-bottom: 2px solid; }
-  .detail-status { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 10px; }
-  .detail-status-icon { font-size: 22px; }
-  .detail-status-text .st-label { font-size: 9px; opacity: 0.7; letter-spacing: 1.5px; text-transform: uppercase; }
-  .detail-status-text .st-val { font-weight: 700; font-size: 15px; }
-  .days-count { font-size: 38px; font-weight: 700; line-height: 1; text-align: right; }
-  .days-count-unit { font-size: 11px; opacity: 0.6; display: block; }
-  .detail-name { font-size: 17px; font-weight: 700; line-height: 1.3; }
-  .detail-fields { display: flex; flex-direction: column; gap: 14px; }
-  .field-label { font-size: 9px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; margin-bottom: 4px; }
-  .field-value { font-size: 13px; font-weight: 500; }
-  .progress-section {}
-  .progress-label { font-size: 10px; color: var(--muted); margin-bottom: 8px; }
-  .progress-bg { height: 6px; border-radius: 3px; background: var(--surface2); }
-  .progress-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
-  .detail-actions { display: flex; gap: 10px; }
-  .edit-btn {
-    flex: 1; padding: 10px; border-radius: 8px; border: 1px solid var(--accent);
-    background: rgba(79,142,247,0.12); color: var(--accent); font-size: 13px;
-    font-weight: 600; cursor: pointer; font-family: 'DM Mono', monospace;
-  }
-  .edit-btn:hover { background: rgba(79,142,247,0.22); }
-  .del-btn {
-    padding: 10px 14px; border-radius: 8px; border: 1px solid rgba(255,45,85,0.3);
-    background: rgba(255,45,85,0.08); color: #FF2D55; font-size: 13px;
-    cursor: pointer; font-family: 'DM Mono', monospace;
-  }
-  .del-btn:hover { background: rgba(255,45,85,0.18); }
-
-  /* ── Modal ── */
-  .modal-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.75);
-    display: flex; align-items: center; justify-content: center; z-index: 100;
-  }
-  .modal {
-    background: var(--surface); border-radius: 16px; border: 1px solid var(--border);
-    padding: 32px; width: 560px; max-width: 95vw; max-height: 90vh; overflow: auto;
-  }
-  .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-  .modal-title { font-size: 18px; font-weight: 700; }
-  .close-btn { background: none; border: none; color: var(--muted); font-size: 18px; cursor: pointer; }
-  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .form-field { display: flex; flex-direction: column; gap: 6px; }
-  .form-field.full { grid-column: 1/-1; }
-  .form-label { font-size: 9px; color: var(--muted); letter-spacing: 2px; text-transform: uppercase; }
-  .form-input {
-    padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border);
-    background: var(--surface2); color: var(--text); font-size: 13px;
-    font-family: 'DM Mono', monospace; outline: none; transition: border-color 0.15s;
-  }
-  .form-input:focus { border-color: var(--accent); }
-  textarea.form-input { height: 80px; resize: vertical; }
-  .modal-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 24px; }
-  .cancel-btn {
-    padding: 10px 20px; border-radius: 8px; border: 1px solid var(--border);
-    background: transparent; color: var(--muted); font-size: 13px;
-    cursor: pointer; font-family: 'DM Mono', monospace;
-  }
-  .save-btn {
-    padding: 10px 24px; border-radius: 8px; border: none;
-    background: var(--accent); color: #fff; font-size: 13px; font-weight: 600;
-    cursor: pointer; font-family: 'DM Mono', monospace; transition: opacity 0.15s;
-  }
-  .save-btn:hover { opacity: 0.85; }
-
-  /* ── Notification ── */
-  #notif {
-    position: fixed; top: 24px; right: 24px; padding: 12px 20px;
-    border-radius: 10px; color: #fff; font-size: 13px; font-weight: 600;
-    z-index: 200; box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-    transform: translateY(-80px); transition: transform 0.3s ease;
-    font-family: 'DM Mono', monospace;
-  }
-  #notif.show { transform: translateY(0); }
-
-  /* Python console badge */
-  .py-engine-note {
-    display: flex; align-items: center; gap: 8px; padding: 10px 14px;
-    background: rgba(255,214,10,0.06); border: 1px solid rgba(255,214,10,0.15);
-    border-radius: 8px; font-size: 11px; color: #FFD60A; margin-bottom: 20px; letter-spacing: 0.5px;
-  }
-</style>
-</head>
-<body>
-
-<!-- Loader -->
-<div id="loader">
-  <div class="loader-icon">🐍</div>
-  <div class="loader-title">PEAMS</div>
-  <div class="loader-sub">LOADING PYTHON DETECTION ENGINE…</div>
-  <div class="loader-bar"><div class="loader-fill"></div></div>
-</div>
-
-<!-- Notification -->
-<div id="notif"></div>
-
-<!-- App Shell -->
-<div id="app">
-  <!-- Sidebar -->
-  <aside>
-    <div class="logo">
-      <div class="logo-icon">⏱</div>
-      <div>
-        <div class="logo-text">PEAMS</div>
-        <div class="logo-sub">Expiry Alert System</div>
-      </div>
-    </div>
-
-    <button class="nav-btn active" data-view="dashboard" onclick="switchView('dashboard')">
-      <span class="nav-icon">◈</span> Dashboard
-    </button>
-    <button class="nav-btn" data-view="list" onclick="switchView('list')">
-      <span class="nav-icon">☰</span> Products
-    </button>
-
-    <div class="sidebar-section-title">QUICK STATUS</div>
-    <button class="alert-row" onclick="setFilter('expired');switchView('list')">
-      <span class="alert-dot" style="background:var(--expired)"></span>
-      <span class="alert-label">Expired</span>
-      <span class="alert-count" id="sb-expired" style="color:var(--expired)">0</span>
-    </button>
-    <button class="alert-row" onclick="setFilter('critical');switchView('list')">
-      <span class="alert-dot" style="background:var(--critical)"></span>
-      <span class="alert-label">Critical</span>
-      <span class="alert-count" id="sb-critical" style="color:var(--critical)">0</span>
-    </button>
-    <button class="alert-row" onclick="setFilter('warning');switchView('list')">
-      <span class="alert-dot" style="background:var(--warning)"></span>
-      <span class="alert-label">Warning</span>
-      <span class="alert-count" id="sb-warning" style="color:var(--warning)">0</span>
-    </button>
-    <button class="alert-row" onclick="setFilter('safe');switchView('list')">
-      <span class="alert-dot" style="background:var(--safe)"></span>
-      <span class="alert-label">Safe</span>
-      <span class="alert-count" id="sb-safe" style="color:var(--safe)">0</span>
-    </button>
-
-    <div class="py-badge">🐍 Python Detection Engine<br>powered by Pyodide</div>
-    <button class="add-btn" onclick="openForm()">+ Add Product</button>
-  </aside>
-
-  <!-- Main -->
-  <main>
-    <div id="view-dashboard" class="page"></div>
-    <div id="view-list" class="page" style="display:none"></div>
-  </main>
-</div>
-
-<!-- Modal -->
-<div id="modal-overlay" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeForm()">
-  <div class="modal">
-    <div class="modal-header">
-      <div class="modal-title" id="form-title">Add New Product</div>
-      <button class="close-btn" onclick="closeForm()">✕</button>
-    </div>
-    <div class="form-grid">
-      <div class="form-field">
-        <label class="form-label">Product Name *</label>
-        <input class="form-input" id="f-name" placeholder="e.g. Aspirin 500mg">
-      </div>
-      <div class="form-field">
-        <label class="form-label">Category *</label>
-        <select class="form-input" id="f-category">
-          <option>Food & Beverage</option><option>Medicine</option>
-          <option>Cosmetics</option><option>Electronics</option><option>Other</option>
-        </select>
-      </div>
-      <div class="form-field">
-        <label class="form-label">Quantity *</label>
-        <input class="form-input" id="f-quantity" type="number" placeholder="0">
-      </div>
-      <div class="form-field">
-        <label class="form-label">Unit</label>
-        <input class="form-input" id="f-unit" placeholder="tablets / liters / pcs">
-      </div>
-      <div class="form-field">
-        <label class="form-label">Expiry Date *</label>
-        <input class="form-input" id="f-expiry" type="date">
-      </div>
-      <div class="form-field">
-        <label class="form-label">Alert Threshold (days)</label>
-        <select class="form-input" id="f-threshold">
-          <option value="7">7 days</option><option value="14" selected>14 days</option>
-          <option value="30">30 days</option><option value="60">60 days</option>
-          <option value="90">90 days</option>
-        </select>
-      </div>
-      <div class="form-field full">
-        <label class="form-label">Notes</label>
-        <textarea class="form-input" id="f-notes" placeholder="Optional notes…"></textarea>
-      </div>
-    </div>
-    <div class="modal-actions">
-      <button class="cancel-btn" onclick="closeForm()">Cancel</button>
-      <button class="save-btn" onclick="saveProduct()">Save Product</button>
-    </div>
-  </div>
-</div>
-
-<script>
-// ═══════════════════════════════════════════════════════════
-//  STATE
-// ═══════════════════════════════════════════════════════════
-let pyodide = null;
-let products = [];
-let currentView = "dashboard";
-let currentFilter = "all";
-let currentSearch = "";
-let currentSort = "expiry";
-let selectedId = null;
-let editingId = null;
-let nextId = 100;
-
-const SAMPLE = [
-  { id:"1", name:"Aspirin 500mg",     category:"Medicine",       quantity:50, unit:"tablets", expiry_date:"2025-03-10", alert_threshold:30, notes:"Pain relief",        created: Date.now() },
-  { id:"2", name:"Orange Juice",      category:"Food & Beverage",quantity:2,  unit:"liters",  expiry_date:"2026-03-05", alert_threshold:7,  notes:"",                   created: Date.now() },
-  { id:"3", name:"Face Cream SPF50",  category:"Cosmetics",      quantity:1,  unit:"jar",     expiry_date:"2026-05-20", alert_threshold:30, notes:"Daily moisturizer",   created: Date.now() },
-  { id:"4", name:"Amoxicillin 250mg", category:"Medicine",       quantity:20, unit:"capsules",expiry_date:"2025-02-15", alert_threshold:14, notes:"Antibiotic course",   created: Date.now() },
-  { id:"5", name:"Whole Milk",        category:"Food & Beverage",quantity:1,  unit:"gallon",  expiry_date:"2026-03-03", alert_threshold:7,  notes:"",                   created: Date.now() },
-  { id:"6", name:"Sunscreen SPF100",  category:"Cosmetics",      quantity:2,  unit:"bottles", expiry_date:"2025-03-25", alert_threshold:30, notes:"Sport formula",       created: Date.now() },
-  { id:"7", name:"Vitamin D3",        category:"Medicine",       quantity:90, unit:"softgels",expiry_date:"2026-09-01", alert_threshold:30, notes:"",                   created: Date.now() },
-];
-
-// ═══════════════════════════════════════════════════════════
-//  PYTHON DETECTION ENGINE (runs in Pyodide)
-// ═══════════════════════════════════════════════════════════
-const PYTHON_ENGINE = `
-import json
-from datetime import date, datetime
-
-# ── Core detection functions ──────────────────────────────
-
-def days_until_expiry(expiry_date_str: str) -> int:
-    """Calculate days remaining until product expiry. Negative = already expired."""
-    today = date.today()
-    expiry = datetime.strptime(expiry_date_str, "%Y-%m-%d").date()
-    return (expiry - today).days
-
-def classify_status(days: int) -> str:
-    """
-    Python expiry status classifier.
-    Returns: 'expired' | 'critical' | 'warning' | 'safe'
-    """
-    if days < 0:
-        return "expired"
-    elif days <= 7:
-        return "critical"
-    elif days <= 30:
-        return "warning"
-    else:
-        return "safe"
-
-def compute_alert_level(days: int, threshold: int) -> str:
-    """
-    Compute alert level relative to the product's custom threshold.
-    Percentage of threshold remaining.
-    """
-    if days < 0:
-        return "overdue"
-    pct = (days / threshold) * 100 if threshold > 0 else 0
-    if pct <= 0:
-        return "zero"
-    elif pct <= 25:
-        return "urgent"
-    elif pct <= 75:
-        return "moderate"
-    else:
-        return "comfortable"
-
-def enrich_product(product: dict) -> dict:
-    """Enrich a single product dict with computed expiry fields."""
-    days = days_until_expiry(product["expiry_date"])
-    status = classify_status(days)
-    alert = compute_alert_level(days, product.get("alert_threshold", 30))
-    pct_remaining = max(0.0, min(100.0, (days / product["alert_threshold"]) * 100)) if product.get("alert_threshold") else 0.0
-
-    return {
-        **product,
-        "days_remaining": days,
-        "status": status,
-        "alert_level": alert,
-        "pct_remaining": round(pct_remaining, 1),
-        "days_label": f"{abs(days)}d overdue" if days < 0 else ("Expires today!" if days == 0 else f"{days}d left"),
-    }
-
-def compute_stats(products: list) -> dict:
-    """Aggregate expiry statistics across all products."""
-    enriched = [enrich_product(p) for p in products]
-    counts = {"total": len(enriched), "expired": 0, "critical": 0, "warning": 0, "safe": 0}
-    for p in enriched:
-        counts[p["status"]] += 1
-    return counts
-
-def filter_and_sort(products: list, status_filter: str, search: str, sort_by: str) -> list:
-    """
-    Python-powered filtering and sorting pipeline.
-    - status_filter: 'all' | 'expired' | 'critical' | 'warning' | 'safe'
-    - search: substring match on name/category
-    - sort_by: 'expiry' | 'name' | 'category' | 'days'
-    """
-    enriched = [enrich_product(p) for p in products]
-
-    # Filter by status
-    if status_filter != "all":
-        enriched = [p for p in enriched if p["status"] == status_filter]
-
-    # Search filter
-    q = search.lower().strip()
-    if q:
-        enriched = [
-            p for p in enriched
-            if q in p["name"].lower() or q in p["category"].lower() or q in p.get("notes","").lower()
-        ]
-
-    # Sort
-    if sort_by == "expiry":
-        enriched.sort(key=lambda p: p["days_remaining"])
-    elif sort_by == "name":
-        enriched.sort(key=lambda p: p["name"].lower())
-    elif sort_by == "category":
-        enriched.sort(key=lambda p: p["category"].lower())
-    elif sort_by == "days":
-        enriched.sort(key=lambda p: p["days_remaining"])
-
-    return enriched
-
-def get_alerts(products: list) -> list:
-    """Return products that need attention (expired + critical + warning)."""
-    enriched = [enrich_product(p) for p in products]
-    alerts = [p for p in enriched if p["status"] in ("expired", "critical", "warning")]
-    alerts.sort(key=lambda p: p["days_remaining"])
-    return alerts
-
-# ── JS-callable API ──────────────────────────────────────
-
-def js_enrich(products_json: str) -> str:
-    products = json.loads(products_json)
-    return json.dumps([enrich_product(p) for p in products])
-
-def js_stats(products_json: str) -> str:
-    products = json.loads(products_json)
-    return json.dumps(compute_stats(products))
-
-def js_filter(products_json: str, status_filter: str, search: str, sort_by: str) -> str:
-    products = json.loads(products_json)
-    return json.dumps(filter_and_sort(products, status_filter, search, sort_by))
-
-def js_alerts(products_json: str) -> str:
-    products = json.loads(products_json)
-    return json.dumps(get_alerts(products))
-
-print("🐍 Python Detection Engine ready.")
-`;
-
-// ═══════════════════════════════════════════════════════════
-//  PYODIDE INIT
-// ═══════════════════════════════════════════════════════════
-async function initPython() {
-  pyodide = await loadPyodide();
-  await pyodide.runPythonAsync(PYTHON_ENGINE);
-
-  // Load saved products or use sample
-  try {
-    const saved = localStorage.getItem("peams-v2-products");
-    products = saved ? JSON.parse(saved) : SAMPLE;
-  } catch { products = SAMPLE; }
-
-  document.getElementById("loader").style.display = "none";
-  document.getElementById("app").classList.add("ready");
-  render();
-}
-
-// ═══════════════════════════════════════════════════════════
-//  PYTHON CALLS
-// ═══════════════════════════════════════════════════════════
-function pyStats() {
-  const r = pyodide.runPython(`js_stats('${JSON.stringify(products).replace(/'/g,"\\'")}')`)
-  return JSON.parse(r);
-}
-
-function pyFilter() {
-  const j = JSON.stringify(products).replace(/'/g,"\\'");
-  const f = currentFilter;
-  const s = currentSearch.replace(/'/g,"\\'");
-  const o = currentSort;
-  const r = pyodide.runPython(`js_filter('${j}', '${f}', '${s}', '${o}')`)
-  return JSON.parse(r);
-}
-
-function pyEnrich(product) {
-  const j = JSON.stringify([product]).replace(/'/g,"\\'");
-  const r = pyodide.runPython(`js_enrich('${j}')`)
-  return JSON.parse(r)[0];
-}
-
-// ═══════════════════════════════════════════════════════════
-//  STATUS CONFIG
-// ═══════════════════════════════════════════════════════════
-const STATUS = {
-  expired: { label:"Expired",  color:"#FF2D55", bg:"rgba(255,45,85,0.08)",   icon:"☠" },
-  critical:{ label:"Critical", color:"#FF6B35", bg:"rgba(255,107,53,0.08)",  icon:"⚠" },
-  warning: { label:"Warning",  color:"#FFD60A", bg:"rgba(255,214,10,0.08)",  icon:"⏳" },
-  safe:    { label:"Safe",     color:"#30D158", bg:"rgba(48,209,88,0.08)",   icon:"✓" },
+const STATUS_CFG = {
+  expired:  { label:"Expired",  color:"#FF2D55", bg:"rgba(255,45,85,0.10)",   icon:"☠",  border:"rgba(255,45,85,0.30)"  },
+  critical: { label:"Critical", color:"#FF6B35", bg:"rgba(255,107,53,0.10)",  icon:"⚠",  border:"rgba(255,107,53,0.30)" },
+  warning:  { label:"Warning",  color:"#FFD60A", bg:"rgba(255,214,10,0.10)",  icon:"⏳", border:"rgba(255,214,10,0.30)" },
+  safe:     { label:"Safe",     color:"#30D158", bg:"rgba(48,209,88,0.10)",   icon:"✓",  border:"rgba(48,209,88,0.30)"  },
 };
 
-// ═══════════════════════════════════════════════════════════
-//  PERSISTENCE
-// ═══════════════════════════════════════════════════════════
-function save() { try { localStorage.setItem("peams-v2-products", JSON.stringify(products)); } catch{} }
+const SAMPLE = [
+  { id:"1", name:"Aspirin 500mg",     category:"Medicine",        quantity:50, unit:"tablets",  expiryDate:"2025-03-10", alertThreshold:30, notes:"Pain relief",       createdAt:Date.now() },
+  { id:"2", name:"Orange Juice",      category:"Food & Beverage", quantity:2,  unit:"liters",   expiryDate:"2026-03-05", alertThreshold:7,  notes:"",                  createdAt:Date.now() },
+  { id:"3", name:"Face Cream SPF50",  category:"Cosmetics",       quantity:1,  unit:"jar",      expiryDate:"2026-05-20", alertThreshold:30, notes:"Daily moisturizer", createdAt:Date.now() },
+  { id:"4", name:"Amoxicillin 250mg", category:"Medicine",        quantity:20, unit:"capsules", expiryDate:"2025-02-15", alertThreshold:14, notes:"Antibiotic course",  createdAt:Date.now() },
+  { id:"5", name:"Whole Milk",        category:"Food & Beverage", quantity:1,  unit:"gallon",   expiryDate:"2026-03-03", alertThreshold:7,  notes:"",                  createdAt:Date.now() },
+  { id:"6", name:"Sunscreen SPF100",  category:"Cosmetics",       quantity:2,  unit:"bottles",  expiryDate:"2025-03-25", alertThreshold:30, notes:"Sport formula",     createdAt:Date.now() },
+  { id:"7", name:"Vitamin D3",        category:"Medicine",        quantity:90, unit:"softgels", expiryDate:"2026-09-01", alertThreshold:30, notes:"",                  createdAt:Date.now() },
+];
 
-// ═══════════════════════════════════════════════════════════
-//  NOTIFICATIONS
-// ═══════════════════════════════════════════════════════════
-let notifTimer;
-function notify(msg, type="success") {
-  const el = document.getElementById("notif");
-  el.textContent = msg;
-  el.style.background = type === "error" ? "#FF2D55" : "#30D158";
-  el.classList.add("show");
-  clearTimeout(notifTimer);
-  notifTimer = setTimeout(() => el.classList.remove("show"), 3000);
+// ── Helpers ──────────────────────────────────────────────
+function getDays(d) {
+  const t = new Date(); t.setHours(0,0,0,0);
+  const e = new Date(d); e.setHours(0,0,0,0);
+  return Math.floor((e - t) / 86400000);
+}
+function getStatus(d) { return d < 0 ? "expired" : d <= 7 ? "critical" : d <= 30 ? "warning" : "safe"; }
+function daysLabel(d) { return d < 0 ? `${Math.abs(d)}d overdue` : d === 0 ? "Expires today!" : `${d}d left`; }
+function useWidth() {
+  const [w, setW] = useState(window.innerWidth);
+  useEffect(() => { const h = () => setW(window.innerWidth); window.addEventListener("resize",h); return () => window.removeEventListener("resize",h); },[]);
+  return w;
 }
 
-// ═══════════════════════════════════════════════════════════
-//  VIEW SWITCHING
-// ═══════════════════════════════════════════════════════════
-function switchView(v) {
-  currentView = v;
-  document.querySelectorAll(".nav-btn").forEach(b => b.classList.toggle("active", b.dataset.view === v));
-  document.getElementById("view-dashboard").style.display = v === "dashboard" ? "" : "none";
-  document.getElementById("view-list").style.display = v === "list" ? "" : "none";
-  render();
-}
+// ════════════════════════════════════════════════════════════
+export default function App() {
+  const [products, setProducts] = useState([]);
+  const [loaded, setLoaded]     = useState(false);
+  const [view, setView]         = useState("dashboard");
+  const [filter, setFilter]     = useState("all");
+  const [search, setSearch]     = useState("");
+  const [sortBy, setSortBy]     = useState("expiry");
+  const [selectedId, setSelId]  = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [editProd, setEditProd] = useState(null);
+  const [notif, setNotif]       = useState(null);
+  const [sideOpen, setSideOpen] = useState(false);
+  const width = useWidth();
+  const mob = width < 768;
+  const tab = width < 1080;
 
-function setFilter(f) { currentFilter = f; }
+  useEffect(() => {
+    try { const s = localStorage.getItem("peams"); setProducts(s ? JSON.parse(s) : SAMPLE); }
+    catch { setProducts(SAMPLE); }
+    setLoaded(true);
+  }, []);
+  useEffect(() => { if (loaded) localStorage.setItem("peams", JSON.stringify(products)); }, [products, loaded]);
 
-// ═══════════════════════════════════════════════════════════
-//  MAIN RENDER
-// ═══════════════════════════════════════════════════════════
-function render() {
-  const stats = pyStats();
-  // Update sidebar counts
-  ["expired","critical","warning","safe"].forEach(k => {
-    document.getElementById("sb-"+k).textContent = stats[k];
-  });
+  const toast = (msg, type="ok") => { setNotif({msg,type}); setTimeout(()=>setNotif(null),3000); };
+  const addP   = d => { setProducts(p=>[...p,{...d,id:Date.now().toString(),createdAt:Date.now()}]); toast("Product added ✓"); setShowForm(false); };
+  const editP  = d => { setProducts(p=>p.map(x=>x.id===d.id?d:x)); toast("Product updated ✓"); setShowForm(false); setEditProd(null); };
+  const delP   = id => { setProducts(p=>p.filter(x=>x.id!==id)); if(selectedId===id)setSelId(null); toast("Removed","err"); };
 
-  if (currentView === "dashboard") renderDashboard(stats);
-  if (currentView === "list") renderList();
-}
+  const stats = { total:products.length, expired:0, critical:0, warning:0, safe:0 };
+  products.forEach(p => { stats[getStatus(getDays(p.expiryDate))]++; });
 
-// ── Dashboard ───────────────────────────────────────────────
-function renderDashboard(stats) {
-  const upcoming = pyFilter(); // uses current filter/sort
-  // override for dashboard: show all sorted by expiry
-  const j = JSON.stringify(products).replace(/'/g,"\\'");
-  const allSorted = JSON.parse(pyodide.runPython(`js_filter('${j}', 'all', '', 'expiry')`));
+  const filtered = products
+    .filter(p => {
+      const s = getStatus(getDays(p.expiryDate));
+      if (filter !== "all" && s !== filter) return false;
+      const q = search.toLowerCase();
+      if (q && !p.name.toLowerCase().includes(q) && !p.category.toLowerCase().includes(q)) return false;
+      return true;
+    })
+    .sort((a,b) => sortBy==="expiry" ? new Date(a.expiryDate)-new Date(b.expiryDate) : sortBy==="name" ? a.name.localeCompare(b.name) : a.category.localeCompare(b.category));
 
-  const dateStr = new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+  const selProd = products.find(p=>p.id===selectedId);
+  const navTo = v => { setView(v); setSideOpen(false); };
 
-  const statCards = [
-    { label:"Total Products", value:stats.total,   color:"#A0A9C0", icon:"📦" },
-    { label:"Expired",        value:stats.expired,  color:"#FF2D55", icon:"☠"  },
-    { label:"Critical ≤7d",   value:stats.critical, color:"#FF6B35", icon:"⚠"  },
-    { label:"Warning ≤30d",   value:stats.warning,  color:"#FFD60A", icon:"⏳" },
-    { label:"Safe",           value:stats.safe,     color:"#30D158", icon:"✓"  },
-  ];
+  return (
+    <div style={R.root}>
+      <style>{CSS}</style>
 
-  const rows = allSorted.slice(0,10).map(p => {
-    const s = STATUS[p.status];
-    return `
-      <tr class="data-row" onclick="selectProduct('${p.id}');switchView('list')">
-        <td><strong>${p.name}</strong></td>
-        <td><span class="cat-badge">${p.category}</span></td>
-        <td>${p.quantity} ${p.unit}</td>
-        <td>${new Date(p.expiry_date).toLocaleDateString()}</td>
-        <td><span class="days-chip" style="color:${s.color};background:${s.bg}">${p.days_label}</span></td>
-        <td><span class="status-badge" style="color:${s.color};background:${s.bg};border-color:${s.color}40">${s.icon} ${s.label}</span></td>
-      </tr>`;
-  }).join("");
+      {notif && <div className={`toast toast-${notif.type}`}>{notif.msg}</div>}
+      {mob && sideOpen && <div className="overlay" onClick={()=>setSideOpen(false)} />}
 
-  document.getElementById("view-dashboard").innerHTML = `
-    <div class="py-engine-note">🐍 All detections powered by Python · <em>datetime</em> · <em>classify_status()</em> · <em>compute_stats()</em></div>
-    <div class="page-header">
-      <div>
-        <div class="page-title">Dashboard</div>
-        <div class="page-subtitle">${dateStr}</div>
-      </div>
-    </div>
-    <div class="stats-grid">
-      ${statCards.map(c=>`
-        <div class="stat-card" style="border-color:${c.color}30" onclick="setFilter('${c.label.toLowerCase().split(' ')[0]}');switchView('list')">
-          <div class="stat-icon">${c.icon}</div>
-          <div class="stat-value" style="color:${c.color}">${c.value}</div>
-          <div class="stat-label">${c.label}</div>
-          <div class="stat-bar" style="background:${c.color}15">
-            <div class="stat-fill" style="background:${c.color};width:${Math.min(100,c.value*15)}%"></div>
+      {/* ── Sidebar ── */}
+      <aside className={`sidebar ${mob ? (sideOpen?"sidebar-open":"sidebar-closed") : "sidebar-desk"}`}>
+        <div style={R.logo}>
+          <span style={{fontSize:28}}>⏱</span>
+          <div><div style={R.logoTxt}>PEAMS</div><div style={R.logoSub}>Expiry Alert</div></div>
+          {mob && <button className="icon-btn" style={{marginLeft:"auto"}} onClick={()=>setSideOpen(false)}>✕</button>}
+        </div>
+
+        <nav style={{display:"flex",flexDirection:"column",gap:4}}>
+          {[{id:"dashboard",icon:"◈",label:"Dashboard"},{id:"list",icon:"☰",label:"Products"}].map(x=>(
+            <button key={x.id} className={`nav-btn ${view===x.id?"nav-active":""}`} onClick={()=>navTo(x.id)}>
+              <span style={{fontSize:15}}>{x.icon}</span>{x.label}
+            </button>
+          ))}
+        </nav>
+
+        <div style={R.secLabel}>QUICK STATUS</div>
+        {Object.entries(STATUS_CFG).map(([k,c])=>(
+          <button key={k} className="alert-row" onClick={()=>{setFilter(k);navTo("list");}}>
+            <span style={{width:8,height:8,borderRadius:"50%",background:c.color,flexShrink:0}} />
+            <span style={{flex:1,fontSize:12,color:"#556380",textAlign:"left"}}>{c.label}</span>
+            <span style={{fontSize:14,fontWeight:700,color:c.color}}>{stats[k]}</span>
+          </button>
+        ))}
+
+        <button className="add-btn" onClick={()=>{setEditProd(null);setShowForm(true);setSideOpen(false);}}>+ Add Product</button>
+      </aside>
+
+      {/* ── Content ── */}
+      <div className={`content ${mob?"content-mob":"content-desk"}`}>
+        {mob && (
+          <div className="topbar">
+            <button className="icon-btn" onClick={()=>setSideOpen(true)}>☰</button>
+            <span style={R.logoTxt}>PEAMS</span>
+            <button className="topbar-add" onClick={()=>{setEditProd(null);setShowForm(true);}}>+</button>
           </div>
-        </div>`).join("")}
+        )}
+
+        <main style={{flex:1,overflow:"auto"}}>
+          {view==="dashboard" && <Dashboard stats={stats} products={products} mob={mob} tab={tab} onSelect={id=>{setSelId(id);setView("list");}} />}
+          {view==="list" && (
+            <ListView products={filtered} filter={filter} search={search} sortBy={sortBy}
+              onFilter={setFilter} onSearch={setSearch} onSort={setSortBy}
+              selectedId={selectedId} onSelect={setSelId} selProd={selProd}
+              onEdit={p=>{setEditProd(p);setShowForm(true);}} onDelete={delP}
+              mob={mob} tab={tab} />
+          )}
+        </main>
+      </div>
+
+      {showForm && <ProductForm product={editProd} onSave={editProd?editP:addP} onClose={()=>{setShowForm(false);setEditProd(null);}} mob={mob} />}
     </div>
-    <div class="section-title">Upcoming Expirations — sorted by Python engine</div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr>
-          <th>Product</th><th>Category</th><th>Quantity</th>
-          <th>Expiry Date</th><th>Days Left</th><th>Status</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  `;
+  );
 }
 
-// ── List ────────────────────────────────────────────────────
-function renderList() {
-  const filtered = pyFilter();
-  const selected = selectedId ? products.find(p=>p.id===selectedId) : null;
-  const enrichedSelected = selected ? pyEnrich(selected) : null;
-
-  const cards = filtered.length === 0
-    ? `<div class="empty">No products match the current filter.</div>`
-    : filtered.map(p => {
-        const s = STATUS[p.status];
-        const isSel = p.id === selectedId;
-        return `
-          <div class="product-card ${isSel?"selected":""}" style="border-color:${isSel?"var(--accent)":s.color+"30"}"
-               onclick="selectProduct('${p.id}')">
-            <div class="card-accent" style="background:${s.color}"></div>
-            <div class="card-body">
-              <div class="card-top">
-                <div>
-                  <div class="card-name">${p.name}</div>
-                  <div class="card-cat">${p.category} · ${p.quantity} ${p.unit}</div>
-                </div>
-                <span class="status-badge" style="color:${s.color};background:${s.bg};border-color:${s.color}40;font-size:11px">${s.icon} ${s.label}</span>
-              </div>
-              <div class="card-bottom">
-                <span class="card-date">📅 ${new Date(p.expiry_date).toLocaleDateString()}</span>
-                <span class="days-chip" style="color:${s.color};background:${s.bg};font-size:11px">${p.days_label}</span>
-              </div>
+// ── Dashboard ─────────────────────────────────────────────
+function Dashboard({stats,products,mob,tab,onSelect}) {
+  const sorted = [...products].sort((a,b)=>new Date(a.expiryDate)-new Date(b.expiryDate));
+  const cols = mob ? "repeat(2,1fr)" : tab ? "repeat(3,1fr)" : "repeat(5,1fr)";
+  return (
+    <div style={R.page}>
+      <div style={R.ph}><h1 style={R.ptitle}>Dashboard</h1><p style={R.psub}>{new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</p></div>
+      <div style={{display:"grid",gridTemplateColumns:cols,gap:14,marginBottom:36}}>
+        {[
+          {l:"Total",   v:stats.total,    c:"#A0A9C0",i:"📦"},
+          {l:"Expired", v:stats.expired,  c:STATUS_CFG.expired.color, i:"☠"},
+          {l:"Critical",v:stats.critical, c:STATUS_CFG.critical.color,i:"⚠"},
+          {l:"Warning", v:stats.warning,  c:STATUS_CFG.warning.color, i:"⏳"},
+          {l:"Safe",    v:stats.safe,     c:STATUS_CFG.safe.color,    i:"✓"},
+        ].map(x=>(
+          <div key={x.l} className="stat-card" style={{borderColor:x.c+"30"}}>
+            <div style={{fontSize:20}}>{x.i}</div>
+            <div style={{fontSize:32,fontWeight:700,color:x.c,lineHeight:1}}>{x.v}</div>
+            <div style={{fontSize:10,color:"#556380",letterSpacing:"1.5px",textTransform:"uppercase"}}>{x.l}</div>
+            <div style={{height:4,borderRadius:2,background:"#181E2E",marginTop:4}}>
+              <div style={{height:"100%",borderRadius:2,background:x.c,width:`${Math.min(100,x.v*14)}%`,transition:"width 0.6s"}} />
             </div>
-          </div>`;
-      }).join("");
-
-  const detailHTML = enrichedSelected ? renderDetailPanel(enrichedSelected) : "";
-
-  document.getElementById("view-list").innerHTML = `
-    <div class="py-engine-note">🐍 Filtering & sorting via Python · <em>filter_and_sort()</em> · <em>classify_status()</em> · <em>days_until_expiry()</em></div>
-    <div class="page-header">
-      <div>
-        <div class="page-title">Products</div>
-        <div class="page-subtitle">${filtered.length} item${filtered.length!==1?"s":""} — Python engine active</div>
+          </div>
+        ))}
       </div>
-    </div>
-    <div class="controls">
-      <input class="search-input" placeholder="🔍  Search products…"
-        value="${currentSearch}" oninput="currentSearch=this.value;render()">
-      <div class="filter-group">
-        ${["all","expired","critical","warning","safe"].map(f=>`
-          <button class="filter-btn ${currentFilter===f?"active":""}"
-            style="${currentFilter===f&&f!=="all"?`background:${STATUS[f]?.color};border-color:transparent`:""}
-                   ${currentFilter===f&&f==="all"?"background:#4F8EF7;border-color:transparent":""}"
-            onclick="currentFilter='${f}';render()">${f==="all"?"All":(STATUS[f]?.label||f)}</button>
-        `).join("")}
-      </div>
-      <select class="sort-select" onchange="currentSort=this.value;render()">
-        <option value="expiry" ${currentSort==="expiry"?"selected":""}>Sort: Expiry Date</option>
-        <option value="name"   ${currentSort==="name"  ?"selected":""}>Sort: Name</option>
-        <option value="category"${currentSort==="category"?"selected":""}>Sort: Category</option>
-      </select>
-    </div>
-    <div class="list-layout">
-      <div class="product-list">${cards}</div>
-      ${enrichedSelected ? `<div class="detail-panel">${detailHTML}</div>` : ""}
-    </div>
-  `;
-}
 
-function renderDetailPanel(p) {
-  const s = STATUS[p.status];
-  const absDays = Math.abs(p.days_remaining);
-  const expiredLabel = p.days_remaining < 0 ? "days overdue" : "days left";
-  return `
-    <div class="detail-header" style="border-color:${s.color}">
-      <div class="detail-status" style="color:${s.color};background:${s.bg}">
-        <div class="detail-status-icon">${s.icon}</div>
-        <div class="detail-status-text">
-          <div class="st-label">STATUS</div>
-          <div class="st-val">${s.label}</div>
+      <div style={R.secTit}>Upcoming Expirations</div>
+      <div className="table-wrap">
+        <div style={{overflowX:"auto"}}>
+          <table style={{width:"100%",borderCollapse:"collapse",minWidth:480}}>
+            <thead>
+              <tr>{["Product","Category","Qty","Expiry","Days","Status"].map(h=><th key={h} style={R.th}>{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {sorted.map(p=>{
+                const d=getDays(p.expiryDate),c=STATUS_CFG[getStatus(d)];
+                return (
+                  <tr key={p.id} className="trow" onClick={()=>onSelect(p.id)}>
+                    <td style={R.td}><strong>{p.name}</strong></td>
+                    <td style={R.td}><span className="cat-badge">{p.category}</span></td>
+                    <td style={R.td}>{p.quantity} {p.unit}</td>
+                    <td style={R.td}>{new Date(p.expiryDate).toLocaleDateString()}</td>
+                    <td style={R.td}><span style={{...R.chip,color:c.color,background:c.bg}}>{daysLabel(d)}</span></td>
+                    <td style={R.td}><span style={{...R.badge,color:c.color,background:c.bg,borderColor:c.border}}>{c.icon} {c.label}</span></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
-      <div class="days-count" style="color:${s.color}">
-        ${absDays}<span class="days-count-unit">${expiredLabel}</span>
+    </div>
+  );
+}
+
+// ── List View ─────────────────────────────────────────────
+function ListView({products,filter,search,sortBy,onFilter,onSearch,onSort,selectedId,onSelect,selProd,onEdit,onDelete,mob,tab}) {
+  return (
+    <div style={R.page}>
+      <div style={R.ph}><h1 style={R.ptitle}>Products</h1><p style={R.psub}>{products.length} item{products.length!==1?"s":""}</p></div>
+
+      <div style={{display:"flex",flexDirection:mob?"column":"row",gap:10,marginBottom:16,flexWrap:"wrap"}}>
+        <input className="search-input" placeholder="🔍  Search…" value={search} onChange={e=>onSearch(e.target.value)} />
+        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+          {["all","expired","critical","warning","safe"].map(f=>{
+            const a=filter===f,c=STATUS_CFG[f];
+            return <button key={f} className={`filter-btn ${a?"filter-active":""}`}
+              style={a?{background:c?.color||"#4F8EF7",borderColor:"transparent",color:"#fff"}:{}}
+              onClick={()=>onFilter(f)}>{f==="all"?"All":c.label}</button>;
+          })}
+        </div>
+        <select className="sort-select" value={sortBy} onChange={e=>onSort(e.target.value)}>
+          <option value="expiry">↑ Expiry</option>
+          <option value="name">A–Z Name</option>
+          <option value="category">Category</option>
+        </select>
+      </div>
+
+      <div style={{display:"flex",gap:16,flexDirection:(mob||tab||!selProd)?"column":"row"}}>
+        <div style={{flex:1,display:"flex",flexDirection:"column",gap:10,minWidth:0}}>
+          {products.length===0 && <div style={{color:"#556380",textAlign:"center",padding:60,fontSize:14}}>No products match this filter.</div>}
+          {products.map(p=>{
+            const d=getDays(p.expiryDate),c=STATUS_CFG[getStatus(d)],sel=p.id===selectedId;
+            return (
+              <div key={p.id} className="pcard"
+                style={{borderColor:sel?"#4F8EF7":c.color+"28",background:sel?"rgba(79,142,247,0.06)":"#111520"}}
+                onClick={()=>onSelect(sel?null:p.id)}>
+                <div style={{width:4,background:c.color,flexShrink:0}} />
+                <div style={{flex:1,padding:"13px 15px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:10}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontWeight:600,fontSize:14,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
+                      <div style={{fontSize:11,color:"#556380"}}>{p.category} · {p.quantity} {p.unit}</div>
+                    </div>
+                    <span style={{...R.badge,color:c.color,background:c.bg,borderColor:c.border,fontSize:11,flexShrink:0}}>{c.icon} {c.label}</span>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:6}}>
+                    <span style={{fontSize:11,color:"#556380"}}>📅 {new Date(p.expiryDate).toLocaleDateString()}</span>
+                    <span style={{...R.chip,color:c.color,background:c.bg,fontSize:11}}>{daysLabel(d)}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {selProd && (mob
+          ? <MobileDetail p={selProd} onEdit={onEdit} onDelete={onDelete} onClose={()=>onSelect(null)} />
+          : <div className="detail-panel"><DetailBody p={selProd} onEdit={onEdit} onDelete={onDelete} /></div>
+        )}
       </div>
     </div>
-    <div class="detail-name">${p.name}</div>
-    <div class="detail-fields">
-      ${[
-        ["Category", p.category],
-        ["Quantity", `${p.quantity} ${p.unit}`],
-        ["Expiry Date", new Date(p.expiry_date).toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})],
-        ["Alert Threshold", `${p.alert_threshold} days`],
-        ["Alert Level", `${p.alert_level} (${p.pct_remaining}% remaining)`],
-        ["Python Status", `classify_status(${p.days_remaining}) → ${p.status}`],
-        ...(p.notes ? [["Notes", p.notes]] : []),
-      ].map(([l,v])=>`
-        <div>
-          <div class="field-label">${l}</div>
-          <div class="field-value">${v}</div>
-        </div>`).join("")}
-    </div>
-    <div class="progress-section">
-      <div class="progress-label">Threshold progress (${p.alert_threshold}d window)</div>
-      <div class="progress-bg">
-        <div class="progress-fill" style="width:${p.pct_remaining}%;background:${s.color}"></div>
+  );
+}
+
+function MobileDetail({p,onEdit,onDelete,onClose}) {
+  return (
+    <>
+      <div className="overlay" onClick={onClose} style={{zIndex:80}} />
+      <div className="drawer">
+        <div style={{width:40,height:4,borderRadius:2,background:"#1F2840",margin:"0 auto 8px"}} />
+        <button className="icon-btn" style={{position:"absolute",top:16,right:16}} onClick={onClose}>✕</button>
+        <DetailBody p={p} onEdit={onEdit} onDelete={onDelete} />
+      </div>
+    </>
+  );
+}
+
+function DetailBody({p,onEdit,onDelete}) {
+  const d=getDays(p.expiryDate),c=STATUS_CFG[getStatus(d)];
+  const pct=Math.max(0,Math.min(100,(d/p.alertThreshold)*100));
+  return (
+    <div style={{display:"flex",flexDirection:"column",gap:18}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingBottom:14,borderBottom:`2px solid ${c.color}`}}>
+        <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:10,color:c.color,background:c.bg}}>
+          <span style={{fontSize:22}}>{c.icon}</span>
+          <div>
+            <div style={{fontSize:9,opacity:.6,letterSpacing:"1.5px"}}>STATUS</div>
+            <div style={{fontWeight:700,fontSize:15}}>{c.label}</div>
+          </div>
+        </div>
+        <div style={{fontSize:36,fontWeight:700,lineHeight:1,color:c.color,textAlign:"right"}}>
+          {Math.abs(d)}<span style={{fontSize:10,opacity:.6,display:"block"}}>{d<0?"overdue":"days left"}</span>
+        </div>
+      </div>
+      <h2 style={{fontSize:16,fontWeight:700,margin:0}}>{p.name}</h2>
+      <div style={{display:"flex",flexDirection:"column",gap:12}}>
+        {[["Category",p.category],["Quantity",`${p.quantity} ${p.unit}`],
+          ["Expiry",new Date(p.expiryDate).toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})],
+          ["Alert Threshold",`${p.alertThreshold} days`],
+          ...(p.notes?[["Notes",p.notes]]:[])
+        ].map(([l,v])=>(
+          <div key={l}>
+            <div style={{fontSize:9,color:"#556380",letterSpacing:"2px",textTransform:"uppercase",marginBottom:3}}>{l}</div>
+            <div style={{fontSize:13,fontWeight:500}}>{v}</div>
+          </div>
+        ))}
+      </div>
+      <div>
+        <div style={{fontSize:10,color:"#556380",marginBottom:8}}>Time remaining ({p.alertThreshold}d window)</div>
+        <div style={{height:6,borderRadius:3,background:"#181E2E"}}>
+          <div style={{height:"100%",borderRadius:3,background:c.color,width:`${pct}%`,transition:"width 0.5s"}} />
+        </div>
+      </div>
+      <div style={{display:"flex",gap:10}}>
+        <button className="edit-btn" onClick={()=>onEdit(p)}>Edit</button>
+        <button className="del-btn" onClick={()=>onDelete(p.id)}>Delete</button>
       </div>
     </div>
-    <div class="detail-actions">
-      <button class="edit-btn" onclick="openForm('${p.id}')">Edit</button>
-      <button class="del-btn" onclick="deleteProduct('${p.id}')">Delete</button>
-    </div>
-  `;
+  );
 }
 
-// ═══════════════════════════════════════════════════════════
-//  PRODUCT ACTIONS
-// ═══════════════════════════════════════════════════════════
-function selectProduct(id) {
-  selectedId = selectedId === id ? null : id;
-  render();
-}
-
-function deleteProduct(id) {
-  products = products.filter(p => p.id !== id);
-  if (selectedId === id) selectedId = null;
-  save();
-  notify("Product deleted", "error");
-  render();
-}
-
-// ── Form ────────────────────────────────────────────────────
-function openForm(id=null) {
-  editingId = id;
-  const p = id ? products.find(x=>x.id===id) : null;
-  document.getElementById("form-title").textContent = p ? "Edit Product" : "Add New Product";
-  document.getElementById("f-name").value     = p?.name        || "";
-  document.getElementById("f-category").value = p?.category    || "Food & Beverage";
-  document.getElementById("f-quantity").value = p?.quantity    || "";
-  document.getElementById("f-unit").value     = p?.unit        || "units";
-  document.getElementById("f-expiry").value   = p?.expiry_date || "";
-  document.getElementById("f-threshold").value= p?.alert_threshold || 14;
-  document.getElementById("f-notes").value    = p?.notes       || "";
-  document.getElementById("modal-overlay").style.display = "flex";
-}
-
-function closeForm() {
-  document.getElementById("modal-overlay").style.display = "none";
-  editingId = null;
-}
-
-function saveProduct() {
-  const name     = document.getElementById("f-name").value.trim();
-  const qty      = document.getElementById("f-quantity").value;
-  const expiry   = document.getElementById("f-expiry").value;
-  if (!name || !qty || !expiry) { alert("Please fill in required fields (Name, Quantity, Expiry Date)."); return; }
-
-  const data = {
-    id: editingId || String(++nextId),
-    name,
-    category:        document.getElementById("f-category").value,
-    quantity:        Number(qty),
-    unit:            document.getElementById("f-unit").value || "units",
-    expiry_date:     expiry,
-    alert_threshold: Number(document.getElementById("f-threshold").value),
-    notes:           document.getElementById("f-notes").value.trim(),
-    created:         editingId ? products.find(p=>p.id===editingId)?.created : Date.now(),
+// ── Form Modal ────────────────────────────────────────────
+function ProductForm({product,onSave,onClose,mob}) {
+  const [f,setF]=useState(product||{name:"",category:"Food & Beverage",quantity:"",unit:"units",expiryDate:"",alertThreshold:14,notes:""});
+  const s=(k,v)=>setF(x=>({...x,[k]:v}));
+  const submit=()=>{
+    if(!f.name||!f.expiryDate||!f.quantity){alert("Fill in Name, Quantity, and Expiry Date.");return;}
+    onSave({...f,quantity:Number(f.quantity),alertThreshold:Number(f.alertThreshold)});
   };
-
-  if (editingId) {
-    products = products.map(p => p.id === editingId ? data : p);
-    notify("Product updated ✓");
-  } else {
-    products.push(data);
-    notify("Product added ✓");
-  }
-  save();
-  closeForm();
-  render();
+  return (
+    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+      <div className="modal">
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
+          <h2 style={{fontSize:18,fontWeight:700,margin:0}}>{product?"Edit Product":"Add Product"}</h2>
+          <button className="icon-btn" onClick={onClose}>✕</button>
+        </div>
+        <div className="form-grid">
+          {[{l:"Product Name *",k:"name",t:"text",p:"e.g. Aspirin 500mg"},
+            {l:"Quantity *",k:"quantity",t:"number",p:"0"},
+            {l:"Unit",k:"unit",t:"text",p:"tablets/liters"},
+            {l:"Expiry Date *",k:"expiryDate",t:"date",p:""}
+          ].map(({l,k,t,p})=>(
+            <div key={k} style={{display:"flex",flexDirection:"column",gap:5}}>
+              <label style={R.fLabel}>{l}</label>
+              <input className="f-input" type={t} placeholder={p} value={f[k]} onChange={e=>s(k,e.target.value)} />
+            </div>
+          ))}
+          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+            <label style={R.fLabel}>Category</label>
+            <select className="f-input" value={f.category} onChange={e=>s("category",e.target.value)}>
+              {CATEGORIES.map(c=><option key={c}>{c}</option>)}
+            </select>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:5}}>
+            <label style={R.fLabel}>Alert Threshold</label>
+            <select className="f-input" value={f.alertThreshold} onChange={e=>s("alertThreshold",e.target.value)}>
+              {THRESHOLDS.map(t=><option key={t} value={t}>{t} days</option>)}
+            </select>
+          </div>
+          <div style={{display:"flex",flexDirection:"column",gap:5,gridColumn:"1/-1"}}>
+            <label style={R.fLabel}>Notes</label>
+            <textarea className="f-input" style={{height:76,resize:"vertical"}} value={f.notes} onChange={e=>s("notes",e.target.value)} placeholder="Optional notes…" />
+          </div>
+        </div>
+        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:22}}>
+          <button className="cancel-btn" onClick={onClose}>Cancel</button>
+          <button className="save-btn" onClick={submit}>{product?"Save Changes":"Add Product"}</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-// ═══════════════════════════════════════════════════════════
-//  BOOT
-// ═══════════════════════════════════════════════════════════
-initPython().catch(e => {
-  console.error(e);
-  document.getElementById("loader").innerHTML = `
-    <div style="color:#FF2D55;font-size:14px;font-family:monospace;text-align:center;padding:40px">
-      ⚠ Failed to load Python engine.<br><small>${e.message}</small>
-    </div>`;
-});
-</script>
-</body>
-</html>
+// ── Inline Styles ─────────────────────────────────────────
+const C={bg:"#0A0D14",surf:"#111520",surf2:"#181E2E",bord:"#1F2840",text:"#E2E8F0",muted:"#556380",acc:"#4F8EF7"};
+const R={
+  root:    {display:"flex",minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'DM Mono',monospace",position:"relative"},
+  logo:    {display:"flex",alignItems:"center",gap:12,padding:"8px 6px",marginBottom:20},
+  logoTxt: {fontSize:14,fontWeight:700,letterSpacing:"3px"},
+  logoSub: {fontSize:9,color:C.muted,letterSpacing:"2px",marginTop:2},
+  secLabel:{fontSize:9,color:C.muted,letterSpacing:"2px",textTransform:"uppercase",padding:"4px 10px",marginTop:20,marginBottom:4},
+  page:    {padding:"24px 20px",maxWidth:1200},
+  ph:      {marginBottom:24},
+  ptitle:  {fontSize:22,fontWeight:700,margin:0,letterSpacing:"-0.5px"},
+  psub:    {fontSize:12,color:C.muted,margin:"4px 0 0 0"},
+  secTit:  {fontSize:11,fontWeight:600,letterSpacing:"2px",color:C.muted,textTransform:"uppercase",margin:"0 0 12px 0"},
+  th:      {padding:"11px 14px",textAlign:"left",fontSize:10,color:C.muted,letterSpacing:"2px",textTransform:"uppercase",background:C.surf2,fontWeight:600,whiteSpace:"nowrap"},
+  td:      {padding:"11px 14px",fontSize:13},
+  chip:    {padding:"3px 10px",borderRadius:100,fontSize:12,fontWeight:600},
+  badge:   {padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:600,border:"1px solid",whiteSpace:"nowrap"},
+  fLabel:  {fontSize:9,color:C.muted,letterSpacing:"2px",textTransform:"uppercase"},
+};
+
+// ── CSS (injected) ────────────────────────────────────────
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500;600&display=swap');
+*{box-sizing:border-box;}body{margin:0;}
+
+/* Sidebar */
+.sidebar{width:240px;background:#111520;border-right:1px solid #1F2840;display:flex;flex-direction:column;padding:24px 14px;gap:6px;flex-shrink:0;}
+.sidebar-desk{position:relative;}
+.sidebar-closed{position:fixed;top:0;left:0;height:100%;z-index:50;transform:translateX(-100%);transition:transform .28s cubic-bezier(.4,0,.2,1);box-shadow:none;}
+.sidebar-open{position:fixed;top:0;left:0;height:100%;z-index:50;transform:translateX(0);transition:transform .28s cubic-bezier(.4,0,.2,1);box-shadow:4px 0 40px rgba(0,0,0,.6);}
+.content{flex:1;display:flex;flex-direction:column;min-width:0;}
+.content-desk{margin-left:240px;}
+.content-mob{margin-left:0;}
+
+/* Topbar */
+.topbar{display:flex;align-items:center;padding:12px 16px;background:#111520;border-bottom:1px solid #1F2840;gap:12px;}
+.topbar-add{background:rgba(79,142,247,.15);border:1px solid #4F8EF7;color:#4F8EF7;border-radius:8px;width:36px;height:36px;font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;}
+
+/* Nav */
+.nav-btn{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;border:none;background:transparent;color:#556380;font-size:13px;cursor:pointer;text-align:left;letter-spacing:.5px;font-family:'DM Mono',monospace;transition:all .15s;width:100%;}
+.nav-btn:hover,.nav-active{background:#181E2E;color:#E2E8F0;}
+.nav-active{font-weight:600;}
+.alert-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:6px;border:none;background:transparent;cursor:pointer;width:100%;font-family:'DM Mono',monospace;transition:background .1s;}
+.alert-row:hover{background:#181E2E;}
+.add-btn{margin-top:auto;padding:12px;border-radius:10px;border:1px solid #4F8EF7;background:rgba(79,142,247,.12);color:#4F8EF7;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Mono',monospace;letter-spacing:.5px;transition:all .2s;}
+.add-btn:hover{background:rgba(79,142,247,.22);transform:translateY(-1px);}
+.icon-btn{background:none;border:none;color:#556380;font-size:18px;cursor:pointer;padding:4px 8px;font-family:'DM Mono',monospace;}
+
+/* Stats */
+.stat-card{background:#111520;border:1px solid;border-radius:12px;padding:18px 16px;display:flex;flex-direction:column;gap:8px;transition:transform .15s;cursor:pointer;}
+.stat-card:hover{transform:translateY(-2px);}
+
+/* Table */
+.table-wrap{background:#111520;border-radius:12px;border:1px solid #1F2840;overflow:hidden;}
+.trow{cursor:pointer;border-top:1px solid #1F2840;transition:background .1s;}
+.trow:hover{background:rgba(255,255,255,.025);}
+.cat-badge{background:#181E2E;padding:3px 8px;border-radius:4px;font-size:11px;color:#556380;}
+
+/* Controls */
+.search-input{padding:10px 14px;border-radius:8px;border:1px solid #1F2840;background:#111520;color:#E2E8F0;font-size:13px;flex:1;min-width:160px;outline:none;font-family:'DM Mono',monospace;transition:border-color .15s;}
+.search-input:focus{border-color:#4F8EF7;}
+.filter-btn{padding:8px 12px;border-radius:6px;border:1px solid #1F2840;background:#111520;color:#556380;font-size:11px;cursor:pointer;font-family:'DM Mono',monospace;letter-spacing:.5px;white-space:nowrap;transition:all .15s;}
+.filter-btn:hover{color:#E2E8F0;background:#181E2E;}
+.filter-active{color:#fff !important;border-color:transparent !important;}
+.sort-select{padding:10px 10px;border-radius:8px;border:1px solid #1F2840;background:#111520;color:#E2E8F0;font-size:12px;cursor:pointer;font-family:'DM Mono',monospace;outline:none;}
+.sort-select option{background:#181E2E;}
+
+/* Product cards */
+.pcard{border:1px solid;border-radius:10px;display:flex;overflow:hidden;cursor:pointer;transition:all .15s;}
+.pcard:hover{transform:translateY(-1px);box-shadow:0 6px 24px rgba(0,0,0,.35);}
+
+/* Detail panel */
+.detail-panel{width:290px;flex-shrink:0;background:#111520;border-radius:14px;border:1px solid #1F2840;padding:22px;display:flex;flex-direction:column;gap:18px;align-self:flex-start;position:sticky;top:0;}
+
+/* Drawer (mobile) */
+.drawer{position:fixed;bottom:0;left:0;right:0;background:#111520;border-radius:20px 20px 0 0;padding:20px 20px 32px;z-index:81;max-height:82vh;overflow-y:auto;display:flex;flex-direction:column;gap:16px;animation:slideUp .3s ease;}
+@keyframes slideUp{from{transform:translateY(60px);opacity:0}to{transform:none;opacity:1}}
+
+/* Overlay */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:49;}
+
+/* Buttons */
+.edit-btn{flex:1;padding:10px;border-radius:8px;border:1px solid #4F8EF7;background:rgba(79,142,247,.12);color:#4F8EF7;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Mono',monospace;transition:background .15s;}
+.edit-btn:hover{background:rgba(79,142,247,.22);}
+.del-btn{padding:10px 14px;border-radius:8px;border:1px solid rgba(255,45,85,.3);background:rgba(255,45,85,.08);color:#FF2D55;font-size:13px;cursor:pointer;font-family:'DM Mono',monospace;}
+.del-btn:hover{background:rgba(255,45,85,.18);}
+
+/* Modal */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px;}
+.modal{background:#111520;border-radius:16px;border:1px solid #1F2840;padding:28px 24px;width:100%;max-width:540px;max-height:90vh;overflow:auto;}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.f-input{padding:10px 12px;border-radius:8px;border:1px solid #1F2840;background:#181E2E;color:#E2E8F0;font-size:13px;font-family:'DM Mono',monospace;outline:none;width:100%;transition:border-color .15s;}
+.f-input:focus{border-color:#4F8EF7;}
+.cancel-btn{padding:10px 20px;border-radius:8px;border:1px solid #1F2840;background:transparent;color:#556380;font-size:13px;cursor:pointer;font-family:'DM Mono',monospace;}
+.save-btn{padding:10px 24px;border-radius:8px;border:none;background:#4F8EF7;color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Mono',monospace;transition:opacity .15s;}
+.save-btn:hover{opacity:.85;}
+
+/* Toast */
+.toast{position:fixed;top:20px;right:20px;padding:12px 20px;border-radius:10px;color:#fff;font-weight:600;font-size:13px;z-index:300;box-shadow:0 8px 30px rgba(0,0,0,.4);font-family:'DM Mono',monospace;animation:fadeSlide .3s ease;}
+.toast-ok{background:#30D158;}
+.toast-err{background:#FF2D55;}
+@keyframes fadeSlide{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:none}}
+
+/* Responsive tweaks */
+@media(max-width:500px){
+  .form-grid{grid-template-columns:1fr !important;}
+  .modal{padding:20px 16px;}
+}
+@media(max-width:380px){
+  .filter-btn{padding:6px 9px;font-size:10px;}
+}
+`;
