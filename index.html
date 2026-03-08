@@ -1,480 +1,641 @@
-import { useState, useEffect } from "react";
-
-// ── Constants ──────────────────────────────────────────────
-const CATEGORIES = ["Food & Beverage", "Medicine", "Cosmetics", "Electronics", "Other"];
-const THRESHOLDS = [7, 14, 30, 60, 90];
-
-const STATUS_CFG = {
-  expired:  { label:"Expired",  color:"#FF2D55", bg:"rgba(255,45,85,0.10)",   icon:"☠",  border:"rgba(255,45,85,0.30)"  },
-  critical: { label:"Critical", color:"#FF6B35", bg:"rgba(255,107,53,0.10)",  icon:"⚠",  border:"rgba(255,107,53,0.30)" },
-  warning:  { label:"Warning",  color:"#FFD60A", bg:"rgba(255,214,10,0.10)",  icon:"⏳", border:"rgba(255,214,10,0.30)" },
-  safe:     { label:"Safe",     color:"#30D158", bg:"rgba(48,209,88,0.10)",   icon:"✓",  border:"rgba(48,209,88,0.30)"  },
-};
-
-const SAMPLE = [
-  { id:"1", name:"Aspirin 500mg",     category:"Medicine",        quantity:50, unit:"tablets",  expiryDate:"2025-03-10", alertThreshold:30, notes:"Pain relief",       createdAt:Date.now() },
-  { id:"2", name:"Orange Juice",      category:"Food & Beverage", quantity:2,  unit:"liters",   expiryDate:"2026-03-05", alertThreshold:7,  notes:"",                  createdAt:Date.now() },
-  { id:"3", name:"Face Cream SPF50",  category:"Cosmetics",       quantity:1,  unit:"jar",      expiryDate:"2026-05-20", alertThreshold:30, notes:"Daily moisturizer", createdAt:Date.now() },
-  { id:"4", name:"Amoxicillin 250mg", category:"Medicine",        quantity:20, unit:"capsules", expiryDate:"2025-02-15", alertThreshold:14, notes:"Antibiotic course",  createdAt:Date.now() },
-  { id:"5", name:"Whole Milk",        category:"Food & Beverage", quantity:1,  unit:"gallon",   expiryDate:"2026-03-03", alertThreshold:7,  notes:"",                  createdAt:Date.now() },
-  { id:"6", name:"Sunscreen SPF100",  category:"Cosmetics",       quantity:2,  unit:"bottles",  expiryDate:"2025-03-25", alertThreshold:30, notes:"Sport formula",     createdAt:Date.now() },
-  { id:"7", name:"Vitamin D3",        category:"Medicine",        quantity:90, unit:"softgels", expiryDate:"2026-09-01", alertThreshold:30, notes:"",                  createdAt:Date.now() },
-];
-
-// ── Helpers ──────────────────────────────────────────────
-function getDays(d) {
-  const t = new Date(); t.setHours(0,0,0,0);
-  const e = new Date(d); e.setHours(0,0,0,0);
-  return Math.floor((e - t) / 86400000);
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>PEAMS – Product Expiry Alert System</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --bg:#0A0D14;--surf:#111520;--surf2:#181E2E;--surf3:#1F2840;
+  --bord:#222B3E;--text:#E2E8F0;--muted:#556380;--acc:#4F8EF7;
+  --expired:#FF2D55;--critical:#FF6B35;--warning:#FFD60A;--safe:#30D158;
+  --sidebar-w:240px;
 }
-function getStatus(d) { return d < 0 ? "expired" : d <= 7 ? "critical" : d <= 30 ? "warning" : "safe"; }
-function daysLabel(d) { return d < 0 ? `${Math.abs(d)}d overdue` : d === 0 ? "Expires today!" : `${d}d left`; }
-function useWidth() {
-  const [w, setW] = useState(window.innerWidth);
-  useEffect(() => { const h = () => setW(window.innerWidth); window.addEventListener("resize",h); return () => window.removeEventListener("resize",h); },[]);
-  return w;
-}
+html,body{height:100%;font-family:'DM Mono',monospace;background:var(--bg);color:var(--text);}
 
-// ════════════════════════════════════════════════════════════
-export default function App() {
-  const [products, setProducts] = useState([]);
-  const [loaded, setLoaded]     = useState(false);
-  const [view, setView]         = useState("dashboard");
-  const [filter, setFilter]     = useState("all");
-  const [search, setSearch]     = useState("");
-  const [sortBy, setSortBy]     = useState("expiry");
-  const [selectedId, setSelId]  = useState(null);
-  const [showForm, setShowForm] = useState(false);
-  const [editProd, setEditProd] = useState(null);
-  const [notif, setNotif]       = useState(null);
-  const [sideOpen, setSideOpen] = useState(false);
-  const width = useWidth();
-  const mob = width < 768;
-  const tab = width < 1080;
+/* ── Loader ─────────────────────────── */
+#loader{position:fixed;inset:0;background:var(--bg);z-index:999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;}
+.ld-icon{font-size:52px;animation:spin 2s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ld-title{font-size:20px;font-weight:700;letter-spacing:4px;}
+.ld-sub{font-size:11px;color:var(--muted);letter-spacing:2px;}
+.ld-bar{width:220px;height:3px;background:var(--surf2);border-radius:2px;overflow:hidden;}
+.ld-fill{height:100%;background:var(--acc);border-radius:2px;animation:ldprog 2s ease-in-out infinite;}
+@keyframes ldprog{0%{width:0}60%{width:80%}100%{width:100%}}
 
-  useEffect(() => {
-    try { const s = localStorage.getItem("peams"); setProducts(s ? JSON.parse(s) : SAMPLE); }
-    catch { setProducts(SAMPLE); }
-    setLoaded(true);
-  }, []);
-  useEffect(() => { if (loaded) localStorage.setItem("peams", JSON.stringify(products)); }, [products, loaded]);
-
-  const toast = (msg, type="ok") => { setNotif({msg,type}); setTimeout(()=>setNotif(null),3000); };
-  const addP   = d => { setProducts(p=>[...p,{...d,id:Date.now().toString(),createdAt:Date.now()}]); toast("Product added ✓"); setShowForm(false); };
-  const editP  = d => { setProducts(p=>p.map(x=>x.id===d.id?d:x)); toast("Product updated ✓"); setShowForm(false); setEditProd(null); };
-  const delP   = id => { setProducts(p=>p.filter(x=>x.id!==id)); if(selectedId===id)setSelId(null); toast("Removed","err"); };
-
-  const stats = { total:products.length, expired:0, critical:0, warning:0, safe:0 };
-  products.forEach(p => { stats[getStatus(getDays(p.expiryDate))]++; });
-
-  const filtered = products
-    .filter(p => {
-      const s = getStatus(getDays(p.expiryDate));
-      if (filter !== "all" && s !== filter) return false;
-      const q = search.toLowerCase();
-      if (q && !p.name.toLowerCase().includes(q) && !p.category.toLowerCase().includes(q)) return false;
-      return true;
-    })
-    .sort((a,b) => sortBy==="expiry" ? new Date(a.expiryDate)-new Date(b.expiryDate) : sortBy==="name" ? a.name.localeCompare(b.name) : a.category.localeCompare(b.category));
-
-  const selProd = products.find(p=>p.id===selectedId);
-  const navTo = v => { setView(v); setSideOpen(false); };
-
-  return (
-    <div style={R.root}>
-      <style>{CSS}</style>
-
-      {notif && <div className={`toast toast-${notif.type}`}>{notif.msg}</div>}
-      {mob && sideOpen && <div className="overlay" onClick={()=>setSideOpen(false)} />}
-
-      {/* ── Sidebar ── */}
-      <aside className={`sidebar ${mob ? (sideOpen?"sidebar-open":"sidebar-closed") : "sidebar-desk"}`}>
-        <div style={R.logo}>
-          <span style={{fontSize:28}}>⏱</span>
-          <div><div style={R.logoTxt}>PEAMS</div><div style={R.logoSub}>Expiry Alert</div></div>
-          {mob && <button className="icon-btn" style={{marginLeft:"auto"}} onClick={()=>setSideOpen(false)}>✕</button>}
-        </div>
-
-        <nav style={{display:"flex",flexDirection:"column",gap:4}}>
-          {[{id:"dashboard",icon:"◈",label:"Dashboard"},{id:"list",icon:"☰",label:"Products"}].map(x=>(
-            <button key={x.id} className={`nav-btn ${view===x.id?"nav-active":""}`} onClick={()=>navTo(x.id)}>
-              <span style={{fontSize:15}}>{x.icon}</span>{x.label}
-            </button>
-          ))}
-        </nav>
-
-        <div style={R.secLabel}>QUICK STATUS</div>
-        {Object.entries(STATUS_CFG).map(([k,c])=>(
-          <button key={k} className="alert-row" onClick={()=>{setFilter(k);navTo("list");}}>
-            <span style={{width:8,height:8,borderRadius:"50%",background:c.color,flexShrink:0}} />
-            <span style={{flex:1,fontSize:12,color:"#556380",textAlign:"left"}}>{c.label}</span>
-            <span style={{fontSize:14,fontWeight:700,color:c.color}}>{stats[k]}</span>
-          </button>
-        ))}
-
-        <button className="add-btn" onClick={()=>{setEditProd(null);setShowForm(true);setSideOpen(false);}}>+ Add Product</button>
-      </aside>
-
-      {/* ── Content ── */}
-      <div className={`content ${mob?"content-mob":"content-desk"}`}>
-        {mob && (
-          <div className="topbar">
-            <button className="icon-btn" onClick={()=>setSideOpen(true)}>☰</button>
-            <span style={R.logoTxt}>PEAMS</span>
-            <button className="topbar-add" onClick={()=>{setEditProd(null);setShowForm(true);}}>+</button>
-          </div>
-        )}
-
-        <main style={{flex:1,overflow:"auto"}}>
-          {view==="dashboard" && <Dashboard stats={stats} products={products} mob={mob} tab={tab} onSelect={id=>{setSelId(id);setView("list");}} />}
-          {view==="list" && (
-            <ListView products={filtered} filter={filter} search={search} sortBy={sortBy}
-              onFilter={setFilter} onSearch={setSearch} onSort={setSortBy}
-              selectedId={selectedId} onSelect={setSelId} selProd={selProd}
-              onEdit={p=>{setEditProd(p);setShowForm(true);}} onDelete={delP}
-              mob={mob} tab={tab} />
-          )}
-        </main>
-      </div>
-
-      {showForm && <ProductForm product={editProd} onSave={editProd?editP:addP} onClose={()=>{setShowForm(false);setEditProd(null);}} mob={mob} />}
-    </div>
-  );
-}
-
-// ── Dashboard ─────────────────────────────────────────────
-function Dashboard({stats,products,mob,tab,onSelect}) {
-  const sorted = [...products].sort((a,b)=>new Date(a.expiryDate)-new Date(b.expiryDate));
-  const cols = mob ? "repeat(2,1fr)" : tab ? "repeat(3,1fr)" : "repeat(5,1fr)";
-  return (
-    <div style={R.page}>
-      <div style={R.ph}><h1 style={R.ptitle}>Dashboard</h1><p style={R.psub}>{new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</p></div>
-      <div style={{display:"grid",gridTemplateColumns:cols,gap:14,marginBottom:36}}>
-        {[
-          {l:"Total",   v:stats.total,    c:"#A0A9C0",i:"📦"},
-          {l:"Expired", v:stats.expired,  c:STATUS_CFG.expired.color, i:"☠"},
-          {l:"Critical",v:stats.critical, c:STATUS_CFG.critical.color,i:"⚠"},
-          {l:"Warning", v:stats.warning,  c:STATUS_CFG.warning.color, i:"⏳"},
-          {l:"Safe",    v:stats.safe,     c:STATUS_CFG.safe.color,    i:"✓"},
-        ].map(x=>(
-          <div key={x.l} className="stat-card" style={{borderColor:x.c+"30"}}>
-            <div style={{fontSize:20}}>{x.i}</div>
-            <div style={{fontSize:32,fontWeight:700,color:x.c,lineHeight:1}}>{x.v}</div>
-            <div style={{fontSize:10,color:"#556380",letterSpacing:"1.5px",textTransform:"uppercase"}}>{x.l}</div>
-            <div style={{height:4,borderRadius:2,background:"#181E2E",marginTop:4}}>
-              <div style={{height:"100%",borderRadius:2,background:x.c,width:`${Math.min(100,x.v*14)}%`,transition:"width 0.6s"}} />
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <div style={R.secTit}>Upcoming Expirations</div>
-      <div className="table-wrap">
-        <div style={{overflowX:"auto"}}>
-          <table style={{width:"100%",borderCollapse:"collapse",minWidth:480}}>
-            <thead>
-              <tr>{["Product","Category","Qty","Expiry","Days","Status"].map(h=><th key={h} style={R.th}>{h}</th>)}</tr>
-            </thead>
-            <tbody>
-              {sorted.map(p=>{
-                const d=getDays(p.expiryDate),c=STATUS_CFG[getStatus(d)];
-                return (
-                  <tr key={p.id} className="trow" onClick={()=>onSelect(p.id)}>
-                    <td style={R.td}><strong>{p.name}</strong></td>
-                    <td style={R.td}><span className="cat-badge">{p.category}</span></td>
-                    <td style={R.td}>{p.quantity} {p.unit}</td>
-                    <td style={R.td}>{new Date(p.expiryDate).toLocaleDateString()}</td>
-                    <td style={R.td}><span style={{...R.chip,color:c.color,background:c.bg}}>{daysLabel(d)}</span></td>
-                    <td style={R.td}><span style={{...R.badge,color:c.color,background:c.bg,borderColor:c.border}}>{c.icon} {c.label}</span></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── List View ─────────────────────────────────────────────
-function ListView({products,filter,search,sortBy,onFilter,onSearch,onSort,selectedId,onSelect,selProd,onEdit,onDelete,mob,tab}) {
-  return (
-    <div style={R.page}>
-      <div style={R.ph}><h1 style={R.ptitle}>Products</h1><p style={R.psub}>{products.length} item{products.length!==1?"s":""}</p></div>
-
-      <div style={{display:"flex",flexDirection:mob?"column":"row",gap:10,marginBottom:16,flexWrap:"wrap"}}>
-        <input className="search-input" placeholder="🔍  Search…" value={search} onChange={e=>onSearch(e.target.value)} />
-        <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-          {["all","expired","critical","warning","safe"].map(f=>{
-            const a=filter===f,c=STATUS_CFG[f];
-            return <button key={f} className={`filter-btn ${a?"filter-active":""}`}
-              style={a?{background:c?.color||"#4F8EF7",borderColor:"transparent",color:"#fff"}:{}}
-              onClick={()=>onFilter(f)}>{f==="all"?"All":c.label}</button>;
-          })}
-        </div>
-        <select className="sort-select" value={sortBy} onChange={e=>onSort(e.target.value)}>
-          <option value="expiry">↑ Expiry</option>
-          <option value="name">A–Z Name</option>
-          <option value="category">Category</option>
-        </select>
-      </div>
-
-      <div style={{display:"flex",gap:16,flexDirection:(mob||tab||!selProd)?"column":"row"}}>
-        <div style={{flex:1,display:"flex",flexDirection:"column",gap:10,minWidth:0}}>
-          {products.length===0 && <div style={{color:"#556380",textAlign:"center",padding:60,fontSize:14}}>No products match this filter.</div>}
-          {products.map(p=>{
-            const d=getDays(p.expiryDate),c=STATUS_CFG[getStatus(d)],sel=p.id===selectedId;
-            return (
-              <div key={p.id} className="pcard"
-                style={{borderColor:sel?"#4F8EF7":c.color+"28",background:sel?"rgba(79,142,247,0.06)":"#111520"}}
-                onClick={()=>onSelect(sel?null:p.id)}>
-                <div style={{width:4,background:c.color,flexShrink:0}} />
-                <div style={{flex:1,padding:"13px 15px"}}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:10,marginBottom:10}}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontWeight:600,fontSize:14,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
-                      <div style={{fontSize:11,color:"#556380"}}>{p.category} · {p.quantity} {p.unit}</div>
-                    </div>
-                    <span style={{...R.badge,color:c.color,background:c.bg,borderColor:c.border,fontSize:11,flexShrink:0}}>{c.icon} {c.label}</span>
-                  </div>
-                  <div style={{display:"flex",justifyContent:"space-between",flexWrap:"wrap",gap:6}}>
-                    <span style={{fontSize:11,color:"#556380"}}>📅 {new Date(p.expiryDate).toLocaleDateString()}</span>
-                    <span style={{...R.chip,color:c.color,background:c.bg,fontSize:11}}>{daysLabel(d)}</span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {selProd && (mob
-          ? <MobileDetail p={selProd} onEdit={onEdit} onDelete={onDelete} onClose={()=>onSelect(null)} />
-          : <div className="detail-panel"><DetailBody p={selProd} onEdit={onEdit} onDelete={onDelete} /></div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function MobileDetail({p,onEdit,onDelete,onClose}) {
-  return (
-    <>
-      <div className="overlay" onClick={onClose} style={{zIndex:80}} />
-      <div className="drawer">
-        <div style={{width:40,height:4,borderRadius:2,background:"#1F2840",margin:"0 auto 8px"}} />
-        <button className="icon-btn" style={{position:"absolute",top:16,right:16}} onClick={onClose}>✕</button>
-        <DetailBody p={p} onEdit={onEdit} onDelete={onDelete} />
-      </div>
-    </>
-  );
-}
-
-function DetailBody({p,onEdit,onDelete}) {
-  const d=getDays(p.expiryDate),c=STATUS_CFG[getStatus(d)];
-  const pct=Math.max(0,Math.min(100,(d/p.alertThreshold)*100));
-  return (
-    <div style={{display:"flex",flexDirection:"column",gap:18}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingBottom:14,borderBottom:`2px solid ${c.color}`}}>
-        <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:10,color:c.color,background:c.bg}}>
-          <span style={{fontSize:22}}>{c.icon}</span>
-          <div>
-            <div style={{fontSize:9,opacity:.6,letterSpacing:"1.5px"}}>STATUS</div>
-            <div style={{fontWeight:700,fontSize:15}}>{c.label}</div>
-          </div>
-        </div>
-        <div style={{fontSize:36,fontWeight:700,lineHeight:1,color:c.color,textAlign:"right"}}>
-          {Math.abs(d)}<span style={{fontSize:10,opacity:.6,display:"block"}}>{d<0?"overdue":"days left"}</span>
-        </div>
-      </div>
-      <h2 style={{fontSize:16,fontWeight:700,margin:0}}>{p.name}</h2>
-      <div style={{display:"flex",flexDirection:"column",gap:12}}>
-        {[["Category",p.category],["Quantity",`${p.quantity} ${p.unit}`],
-          ["Expiry",new Date(p.expiryDate).toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})],
-          ["Alert Threshold",`${p.alertThreshold} days`],
-          ...(p.notes?[["Notes",p.notes]]:[])
-        ].map(([l,v])=>(
-          <div key={l}>
-            <div style={{fontSize:9,color:"#556380",letterSpacing:"2px",textTransform:"uppercase",marginBottom:3}}>{l}</div>
-            <div style={{fontSize:13,fontWeight:500}}>{v}</div>
-          </div>
-        ))}
-      </div>
-      <div>
-        <div style={{fontSize:10,color:"#556380",marginBottom:8}}>Time remaining ({p.alertThreshold}d window)</div>
-        <div style={{height:6,borderRadius:3,background:"#181E2E"}}>
-          <div style={{height:"100%",borderRadius:3,background:c.color,width:`${pct}%`,transition:"width 0.5s"}} />
-        </div>
-      </div>
-      <div style={{display:"flex",gap:10}}>
-        <button className="edit-btn" onClick={()=>onEdit(p)}>Edit</button>
-        <button className="del-btn" onClick={()=>onDelete(p.id)}>Delete</button>
-      </div>
-    </div>
-  );
-}
-
-// ── Form Modal ────────────────────────────────────────────
-function ProductForm({product,onSave,onClose,mob}) {
-  const [f,setF]=useState(product||{name:"",category:"Food & Beverage",quantity:"",unit:"units",expiryDate:"",alertThreshold:14,notes:""});
-  const s=(k,v)=>setF(x=>({...x,[k]:v}));
-  const submit=()=>{
-    if(!f.name||!f.expiryDate||!f.quantity){alert("Fill in Name, Quantity, and Expiry Date.");return;}
-    onSave({...f,quantity:Number(f.quantity),alertThreshold:Number(f.alertThreshold)});
-  };
-  return (
-    <div className="modal-overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div className="modal">
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:22}}>
-          <h2 style={{fontSize:18,fontWeight:700,margin:0}}>{product?"Edit Product":"Add Product"}</h2>
-          <button className="icon-btn" onClick={onClose}>✕</button>
-        </div>
-        <div className="form-grid">
-          {[{l:"Product Name *",k:"name",t:"text",p:"e.g. Aspirin 500mg"},
-            {l:"Quantity *",k:"quantity",t:"number",p:"0"},
-            {l:"Unit",k:"unit",t:"text",p:"tablets/liters"},
-            {l:"Expiry Date *",k:"expiryDate",t:"date",p:""}
-          ].map(({l,k,t,p})=>(
-            <div key={k} style={{display:"flex",flexDirection:"column",gap:5}}>
-              <label style={R.fLabel}>{l}</label>
-              <input className="f-input" type={t} placeholder={p} value={f[k]} onChange={e=>s(k,e.target.value)} />
-            </div>
-          ))}
-          <div style={{display:"flex",flexDirection:"column",gap:5}}>
-            <label style={R.fLabel}>Category</label>
-            <select className="f-input" value={f.category} onChange={e=>s("category",e.target.value)}>
-              {CATEGORIES.map(c=><option key={c}>{c}</option>)}
-            </select>
-          </div>
-          <div style={{display:"flex",flexDirection:"column",gap:5}}>
-            <label style={R.fLabel}>Alert Threshold</label>
-            <select className="f-input" value={f.alertThreshold} onChange={e=>s("alertThreshold",e.target.value)}>
-              {THRESHOLDS.map(t=><option key={t} value={t}>{t} days</option>)}
-            </select>
-          </div>
-          <div style={{display:"flex",flexDirection:"column",gap:5,gridColumn:"1/-1"}}>
-            <label style={R.fLabel}>Notes</label>
-            <textarea className="f-input" style={{height:76,resize:"vertical"}} value={f.notes} onChange={e=>s("notes",e.target.value)} placeholder="Optional notes…" />
-          </div>
-        </div>
-        <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:22}}>
-          <button className="cancel-btn" onClick={onClose}>Cancel</button>
-          <button className="save-btn" onClick={submit}>{product?"Save Changes":"Add Product"}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Inline Styles ─────────────────────────────────────────
-const C={bg:"#0A0D14",surf:"#111520",surf2:"#181E2E",bord:"#1F2840",text:"#E2E8F0",muted:"#556380",acc:"#4F8EF7"};
-const R={
-  root:    {display:"flex",minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'DM Mono',monospace",position:"relative"},
-  logo:    {display:"flex",alignItems:"center",gap:12,padding:"8px 6px",marginBottom:20},
-  logoTxt: {fontSize:14,fontWeight:700,letterSpacing:"3px"},
-  logoSub: {fontSize:9,color:C.muted,letterSpacing:"2px",marginTop:2},
-  secLabel:{fontSize:9,color:C.muted,letterSpacing:"2px",textTransform:"uppercase",padding:"4px 10px",marginTop:20,marginBottom:4},
-  page:    {padding:"24px 20px",maxWidth:1200},
-  ph:      {marginBottom:24},
-  ptitle:  {fontSize:22,fontWeight:700,margin:0,letterSpacing:"-0.5px"},
-  psub:    {fontSize:12,color:C.muted,margin:"4px 0 0 0"},
-  secTit:  {fontSize:11,fontWeight:600,letterSpacing:"2px",color:C.muted,textTransform:"uppercase",margin:"0 0 12px 0"},
-  th:      {padding:"11px 14px",textAlign:"left",fontSize:10,color:C.muted,letterSpacing:"2px",textTransform:"uppercase",background:C.surf2,fontWeight:600,whiteSpace:"nowrap"},
-  td:      {padding:"11px 14px",fontSize:13},
-  chip:    {padding:"3px 10px",borderRadius:100,fontSize:12,fontWeight:600},
-  badge:   {padding:"4px 10px",borderRadius:6,fontSize:11,fontWeight:600,border:"1px solid",whiteSpace:"nowrap"},
-  fLabel:  {fontSize:9,color:C.muted,letterSpacing:"2px",textTransform:"uppercase"},
-};
-
-// ── CSS (injected) ────────────────────────────────────────
-const CSS = `
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500;600&display=swap');
-*{box-sizing:border-box;}body{margin:0;}
+/* ── Layout ─────────────────────────── */
+#app{display:none;min-height:100vh;}
+#app.ready{display:flex;animation:fadeIn .4s ease;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
 /* Sidebar */
-.sidebar{width:240px;background:#111520;border-right:1px solid #1F2840;display:flex;flex-direction:column;padding:24px 14px;gap:6px;flex-shrink:0;}
-.sidebar-desk{position:relative;}
-.sidebar-closed{position:fixed;top:0;left:0;height:100%;z-index:50;transform:translateX(-100%);transition:transform .28s cubic-bezier(.4,0,.2,1);box-shadow:none;}
-.sidebar-open{position:fixed;top:0;left:0;height:100%;z-index:50;transform:translateX(0);transition:transform .28s cubic-bezier(.4,0,.2,1);box-shadow:4px 0 40px rgba(0,0,0,.6);}
-.content{flex:1;display:flex;flex-direction:column;min-width:0;}
-.content-desk{margin-left:240px;}
-.content-mob{margin-left:0;}
+.sidebar{
+  width:var(--sidebar-w);min-height:100vh;background:var(--surf);
+  border-right:1px solid var(--bord);display:flex;flex-direction:column;
+  padding:24px 14px;gap:6px;flex-shrink:0;
+}
+@media(max-width:767px){
+  .sidebar{
+    position:fixed;top:0;left:0;height:100%;z-index:60;
+    transform:translateX(-100%);transition:transform .28s cubic-bezier(.4,0,.2,1);
+    box-shadow:none;
+  }
+  .sidebar.open{transform:translateX(0);box-shadow:4px 0 40px rgba(0,0,0,.7);}
+}
 
-/* Topbar */
-.topbar{display:flex;align-items:center;padding:12px 16px;background:#111520;border-bottom:1px solid #1F2840;gap:12px;}
-.topbar-add{background:rgba(79,142,247,.15);border:1px solid #4F8EF7;color:#4F8EF7;border-radius:8px;width:36px;height:36px;font-size:22px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:'DM Mono',monospace;}
+.logo{display:flex;align-items:center;gap:12px;padding:8px 6px;margin-bottom:20px;}
+.logo-icon{font-size:28px;}
+.logo-text{font-size:14px;font-weight:700;letter-spacing:3px;}
+.logo-sub{font-size:9px;color:var(--muted);letter-spacing:2px;margin-top:2px;}
+.sidebar-close{margin-left:auto;background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;display:none;}
+@media(max-width:767px){.sidebar-close{display:block;}}
 
-/* Nav */
-.nav-btn{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;border:none;background:transparent;color:#556380;font-size:13px;cursor:pointer;text-align:left;letter-spacing:.5px;font-family:'DM Mono',monospace;transition:all .15s;width:100%;}
-.nav-btn:hover,.nav-active{background:#181E2E;color:#E2E8F0;}
-.nav-active{font-weight:600;}
+.sec-label{font-size:9px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;padding:4px 10px;margin-top:20px;margin-bottom:4px;}
+
+.nav-btn{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;border:none;background:transparent;color:var(--muted);font-size:13px;cursor:pointer;text-align:left;letter-spacing:.5px;font-family:'DM Mono',monospace;transition:all .15s;width:100%;}
+.nav-btn:hover,.nav-btn.active{background:var(--surf2);color:var(--text);}
+.nav-btn.active{font-weight:600;}
 .alert-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:6px;border:none;background:transparent;cursor:pointer;width:100%;font-family:'DM Mono',monospace;transition:background .1s;}
-.alert-row:hover{background:#181E2E;}
-.add-btn{margin-top:auto;padding:12px;border-radius:10px;border:1px solid #4F8EF7;background:rgba(79,142,247,.12);color:#4F8EF7;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Mono',monospace;letter-spacing:.5px;transition:all .2s;}
+.alert-row:hover{background:var(--surf2);}
+.a-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.a-label{flex:1;font-size:12px;color:var(--muted);text-align:left;}
+.a-count{font-size:14px;font-weight:700;}
+.add-btn{margin-top:auto;padding:12px;border-radius:10px;border:1px solid var(--acc);background:rgba(79,142,247,.12);color:var(--acc);font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Mono',monospace;letter-spacing:.5px;transition:all .2s;}
 .add-btn:hover{background:rgba(79,142,247,.22);transform:translateY(-1px);}
-.icon-btn{background:none;border:none;color:#556380;font-size:18px;cursor:pointer;padding:4px 8px;font-family:'DM Mono',monospace;}
+.py-note{margin-top:10px;padding:8px 10px;border-radius:8px;background:rgba(255,214,10,.06);border:1px solid rgba(255,214,10,.2);font-size:10px;color:#FFD60A;letter-spacing:.5px;text-align:center;line-height:1.5;}
 
-/* Stats */
-.stat-card{background:#111520;border:1px solid;border-radius:12px;padding:18px 16px;display:flex;flex-direction:column;gap:8px;transition:transform .15s;cursor:pointer;}
-.stat-card:hover{transform:translateY(-2px);}
+/* Content wrapper */
+.content{flex:1;display:flex;flex-direction:column;min-width:0;}
+@media(min-width:768px){.content{margin-left:var(--sidebar-w);}}
 
-/* Table */
-.table-wrap{background:#111520;border-radius:12px;border:1px solid #1F2840;overflow:hidden;}
-.trow{cursor:pointer;border-top:1px solid #1F2840;transition:background .1s;}
-.trow:hover{background:rgba(255,255,255,.025);}
-.cat-badge{background:#181E2E;padding:3px 8px;border-radius:4px;font-size:11px;color:#556380;}
-
-/* Controls */
-.search-input{padding:10px 14px;border-radius:8px;border:1px solid #1F2840;background:#111520;color:#E2E8F0;font-size:13px;flex:1;min-width:160px;outline:none;font-family:'DM Mono',monospace;transition:border-color .15s;}
-.search-input:focus{border-color:#4F8EF7;}
-.filter-btn{padding:8px 12px;border-radius:6px;border:1px solid #1F2840;background:#111520;color:#556380;font-size:11px;cursor:pointer;font-family:'DM Mono',monospace;letter-spacing:.5px;white-space:nowrap;transition:all .15s;}
-.filter-btn:hover{color:#E2E8F0;background:#181E2E;}
-.filter-active{color:#fff !important;border-color:transparent !important;}
-.sort-select{padding:10px 10px;border-radius:8px;border:1px solid #1F2840;background:#111520;color:#E2E8F0;font-size:12px;cursor:pointer;font-family:'DM Mono',monospace;outline:none;}
-.sort-select option{background:#181E2E;}
-
-/* Product cards */
-.pcard{border:1px solid;border-radius:10px;display:flex;overflow:hidden;cursor:pointer;transition:all .15s;}
-.pcard:hover{transform:translateY(-1px);box-shadow:0 6px 24px rgba(0,0,0,.35);}
-
-/* Detail panel */
-.detail-panel{width:290px;flex-shrink:0;background:#111520;border-radius:14px;border:1px solid #1F2840;padding:22px;display:flex;flex-direction:column;gap:18px;align-self:flex-start;position:sticky;top:0;}
-
-/* Drawer (mobile) */
-.drawer{position:fixed;bottom:0;left:0;right:0;background:#111520;border-radius:20px 20px 0 0;padding:20px 20px 32px;z-index:81;max-height:82vh;overflow-y:auto;display:flex;flex-direction:column;gap:16px;animation:slideUp .3s ease;}
-@keyframes slideUp{from{transform:translateY(60px);opacity:0}to{transform:none;opacity:1}}
+/* Topbar (mobile) */
+.topbar{display:none;align-items:center;padding:12px 16px;background:var(--surf);border-bottom:1px solid var(--bord);gap:12px;}
+@media(max-width:767px){.topbar{display:flex;}}
+.topbar-logo{flex:1;font-size:14px;font-weight:700;letter-spacing:3px;}
+.topbar-add{background:rgba(79,142,247,.15);border:1px solid var(--acc);color:var(--acc);border-radius:8px;width:36px;height:36px;font-size:24px;cursor:pointer;font-family:'DM Mono',monospace;display:flex;align-items:center;justify-content:center;}
+.icon-btn{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px 8px;}
 
 /* Overlay */
-.overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:49;}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:49;display:none;}
+.overlay.show{display:block;}
 
-/* Buttons */
-.edit-btn{flex:1;padding:10px;border-radius:8px;border:1px solid #4F8EF7;background:rgba(79,142,247,.12);color:#4F8EF7;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Mono',monospace;transition:background .15s;}
+/* Page */
+.page{padding:24px 20px;max-width:1200px;}
+.page-title{font-size:22px;font-weight:700;margin:0 0 4px 0;letter-spacing:-.5px;}
+.page-sub{font-size:12px;color:var(--muted);margin-bottom:24px;}
+.sec-title{font-size:11px;font-weight:600;letter-spacing:2px;color:var(--muted);text-transform:uppercase;margin:0 0 12px 0;}
+
+/* Python engine badge */
+.py-engine{display:flex;align-items:center;gap:8px;padding:10px 14px;background:rgba(255,214,10,.06);border:1px solid rgba(255,214,10,.15);border-radius:8px;font-size:11px;color:#FFD60A;margin-bottom:20px;letter-spacing:.5px;}
+
+/* Stats grid */
+.stats-grid{display:grid;gap:14px;margin-bottom:36px;}
+@media(max-width:480px){.stats-grid{grid-template-columns:repeat(2,1fr);}}
+@media(min-width:481px) and (max-width:900px){.stats-grid{grid-template-columns:repeat(3,1fr);}}
+@media(min-width:901px){.stats-grid{grid-template-columns:repeat(5,1fr);}}
+.stat-card{background:var(--surf);border:1px solid;border-radius:12px;padding:18px 16px;display:flex;flex-direction:column;gap:8px;cursor:pointer;transition:transform .15s;}
+.stat-card:hover{transform:translateY(-2px);}
+.stat-val{font-size:32px;font-weight:700;line-height:1;}
+.stat-lbl{font-size:10px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;}
+.stat-bar-bg{height:4px;border-radius:2px;background:var(--surf2);margin-top:4px;}
+.stat-bar-fill{height:100%;border-radius:2px;transition:width .6s ease;}
+
+/* Table */
+.table-wrap{background:var(--surf);border-radius:12px;border:1px solid var(--bord);overflow:hidden;}
+.tbl-scroll{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;min-width:480px;}
+th{padding:11px 14px;text-align:left;font-size:10px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;background:var(--surf2);font-weight:600;white-space:nowrap;}
+tr.trow{cursor:pointer;border-top:1px solid var(--bord);transition:background .1s;}
+tr.trow:hover{background:rgba(255,255,255,.025);}
+td{padding:11px 14px;font-size:13px;}
+.cat-badge{background:var(--surf2);padding:3px 8px;border-radius:4px;font-size:11px;color:var(--muted);}
+.chip{padding:3px 10px;border-radius:100px;font-size:12px;font-weight:600;}
+.s-badge{padding:4px 10px;border-radius:6px;font-size:11px;font-weight:600;border:1px solid;white-space:nowrap;}
+
+/* Controls */
+.controls{display:flex;flex-direction:column;gap:10px;margin-bottom:16px;}
+@media(min-width:600px){.controls{flex-direction:row;align-items:center;flex-wrap:wrap;}}
+.search-inp{padding:10px 14px;border-radius:8px;border:1px solid var(--bord);background:var(--surf);color:var(--text);font-size:13px;flex:1;min-width:160px;outline:none;font-family:'DM Mono',monospace;width:100%;transition:border-color .15s;}
+.search-inp:focus{border-color:var(--acc);}
+.filter-group{display:flex;gap:6px;flex-wrap:wrap;}
+.filter-btn{padding:8px 12px;border-radius:6px;border:1px solid var(--bord);background:var(--surf);color:var(--muted);font-size:11px;cursor:pointer;font-family:'DM Mono',monospace;letter-spacing:.5px;white-space:nowrap;transition:all .15s;}
+.filter-btn:hover{color:var(--text);background:var(--surf2);}
+.filter-btn.active{color:#fff;border-color:transparent;}
+.sort-sel{padding:10px 10px;border-radius:8px;border:1px solid var(--bord);background:var(--surf);color:var(--text);font-size:12px;cursor:pointer;font-family:'DM Mono',monospace;outline:none;}
+.sort-sel option{background:var(--surf2);}
+
+/* Product cards */
+.pcard{border:1px solid;border-radius:10px;background:var(--surf);display:flex;overflow:hidden;cursor:pointer;transition:all .15s;margin-bottom:10px;}
+.pcard:hover{transform:translateY(-1px);box-shadow:0 6px 24px rgba(0,0,0,.35);}
+.pcard.selected{background:rgba(79,142,247,.06) !important;}
+.card-bar{width:4px;flex-shrink:0;}
+.card-body{flex:1;padding:13px 15px;}
+.card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px;}
+.card-name{font-weight:600;font-size:14px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.card-meta{font-size:11px;color:var(--muted);}
+.card-btm{display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px;}
+.card-date{font-size:11px;color:var(--muted);}
+
+/* List layout */
+.list-layout{display:flex;gap:16px;}
+.product-list{flex:1;min-width:0;}
+.empty{color:var(--muted);text-align:center;padding:60px;font-size:14px;}
+
+/* Detail panel (desktop) */
+.detail-panel{width:290px;flex-shrink:0;background:var(--surf);border-radius:14px;border:1px solid var(--bord);padding:22px;display:flex;flex-direction:column;gap:18px;align-self:flex-start;position:sticky;top:0;}
+@media(max-width:900px){.detail-panel{display:none;}}
+
+/* Drawer (mobile/tablet) */
+.drawer-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:80;display:none;}
+.drawer-overlay.show{display:block;}
+.drawer{position:fixed;bottom:0;left:0;right:0;background:var(--surf);border-radius:20px 20px 0 0;padding:20px 20px 32px;z-index:81;max-height:82vh;overflow-y:auto;display:none;flex-direction:column;gap:16px;}
+.drawer.show{display:flex;animation:slideUp .3s ease;}
+@keyframes slideUp{from{transform:translateY(60px);opacity:0}to{transform:none;opacity:1}}
+.drawer-handle{width:40px;height:4px;border-radius:2px;background:var(--bord);margin:0 auto 8px;}
+.drawer-close{position:absolute;top:16px;right:16px;background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;}
+
+/* Detail content */
+.d-header{display:flex;justify-content:space-between;align-items:center;padding-bottom:14px;border-bottom:2px solid;}
+.d-status{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:10px;}
+.d-icon{font-size:22px;}
+.d-lbl{font-size:9px;opacity:.6;letter-spacing:1.5px;text-transform:uppercase;}
+.d-val{font-weight:700;font-size:15px;}
+.d-days{font-size:36px;font-weight:700;line-height:1;text-align:right;}
+.d-days-unit{font-size:10px;opacity:.6;display:block;}
+.d-name{font-size:16px;font-weight:700;line-height:1.3;}
+.d-fields{display:flex;flex-direction:column;gap:12px;}
+.d-field-lbl{font-size:9px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:3px;}
+.d-field-val{font-size:13px;font-weight:500;}
+.prog-bg{height:6px;border-radius:3px;background:var(--surf2);}
+.prog-fill{height:100%;border-radius:3px;transition:width .5s;}
+.d-actions{display:flex;gap:10px;}
+.edit-btn{flex:1;padding:10px;border-radius:8px;border:1px solid var(--acc);background:rgba(79,142,247,.12);color:var(--acc);font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Mono',monospace;transition:background .15s;}
 .edit-btn:hover{background:rgba(79,142,247,.22);}
 .del-btn{padding:10px 14px;border-radius:8px;border:1px solid rgba(255,45,85,.3);background:rgba(255,45,85,.08);color:#FF2D55;font-size:13px;cursor:pointer;font-family:'DM Mono',monospace;}
 .del-btn:hover{background:rgba(255,45,85,.18);}
 
 /* Modal */
-.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;z-index:100;padding:16px;}
-.modal{background:#111520;border-radius:16px;border:1px solid #1F2840;padding:28px 24px;width:100%;max-width:540px;max-height:90vh;overflow:auto;}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);display:none;align-items:center;justify-content:center;z-index:100;padding:16px;}
+.modal-overlay.show{display:flex;}
+.modal{background:var(--surf);border-radius:16px;border:1px solid var(--bord);padding:28px 24px;width:100%;max-width:540px;max-height:90vh;overflow:auto;}
+.modal-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:22px;}
+.modal-title{font-size:18px;font-weight:700;}
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
-.f-input{padding:10px 12px;border-radius:8px;border:1px solid #1F2840;background:#181E2E;color:#E2E8F0;font-size:13px;font-family:'DM Mono',monospace;outline:none;width:100%;transition:border-color .15s;}
-.f-input:focus{border-color:#4F8EF7;}
-.cancel-btn{padding:10px 20px;border-radius:8px;border:1px solid #1F2840;background:transparent;color:#556380;font-size:13px;cursor:pointer;font-family:'DM Mono',monospace;}
-.save-btn{padding:10px 24px;border-radius:8px;border:none;background:#4F8EF7;color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Mono',monospace;transition:opacity .15s;}
+@media(max-width:480px){.form-grid{grid-template-columns:1fr;}}
+.f-label{font-size:9px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;display:block;margin-bottom:5px;}
+.f-inp{padding:10px 12px;border-radius:8px;border:1px solid var(--bord);background:var(--surf2);color:var(--text);font-size:13px;font-family:'DM Mono',monospace;outline:none;width:100%;transition:border-color .15s;}
+.f-inp:focus{border-color:var(--acc);}
+textarea.f-inp{height:76px;resize:vertical;}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:22px;}
+.cancel-btn{padding:10px 20px;border-radius:8px;border:1px solid var(--bord);background:transparent;color:var(--muted);font-size:13px;cursor:pointer;font-family:'DM Mono',monospace;}
+.save-btn{padding:10px 24px;border-radius:8px;border:none;background:var(--acc);color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Mono',monospace;transition:opacity .15s;}
 .save-btn:hover{opacity:.85;}
 
 /* Toast */
-.toast{position:fixed;top:20px;right:20px;padding:12px 20px;border-radius:10px;color:#fff;font-weight:600;font-size:13px;z-index:300;box-shadow:0 8px 30px rgba(0,0,0,.4);font-family:'DM Mono',monospace;animation:fadeSlide .3s ease;}
-.toast-ok{background:#30D158;}
-.toast-err{background:#FF2D55;}
-@keyframes fadeSlide{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:none}}
+#toast{position:fixed;top:20px;right:20px;padding:12px 20px;border-radius:10px;color:#fff;font-weight:600;font-size:13px;z-index:300;box-shadow:0 8px 30px rgba(0,0,0,.4);font-family:'DM Mono',monospace;transform:translateY(-80px);transition:transform .3s ease;}
+#toast.show{transform:translateY(0);}
+</style>
+</head>
+<body>
 
-/* Responsive tweaks */
-@media(max-width:500px){
-  .form-grid{grid-template-columns:1fr !important;}
-  .modal{padding:20px 16px;}
-}
-@media(max-width:380px){
-  .filter-btn{padding:6px 9px;font-size:10px;}
-}
+<!-- Loader -->
+<div id="loader">
+  <div class="ld-icon">🐍</div>
+  <div class="ld-title">PEAMS</div>
+  <div class="ld-sub">LOADING PYTHON DETECTION ENGINE…</div>
+  <div class="ld-bar"><div class="ld-fill"></div></div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- Overlay (sidebar + drawer) -->
+<div class="overlay" id="mob-overlay" onclick="closeSidebar()"></div>
+
+<!-- App -->
+<div id="app">
+
+  <!-- Sidebar -->
+  <aside class="sidebar" id="sidebar">
+    <div class="logo">
+      <div class="logo-icon">⏱</div>
+      <div><div class="logo-text">PEAMS</div><div class="logo-sub">Expiry Alert</div></div>
+      <button class="sidebar-close" onclick="closeSidebar()">✕</button>
+    </div>
+    <button class="nav-btn active" data-v="dashboard" onclick="switchView('dashboard')"><span style="font-size:15px">◈</span> Dashboard</button>
+    <button class="nav-btn" data-v="list" onclick="switchView('list')"><span style="font-size:15px">☰</span> Products</button>
+
+    <div class="sec-label">QUICK STATUS</div>
+    <button class="alert-row" onclick="quickFilter('expired')"><span class="a-dot" style="background:var(--expired)"></span><span class="a-label">Expired</span><span class="a-count" id="sb-expired" style="color:var(--expired)">0</span></button>
+    <button class="alert-row" onclick="quickFilter('critical')"><span class="a-dot" style="background:var(--critical)"></span><span class="a-label">Critical</span><span class="a-count" id="sb-critical" style="color:var(--critical)">0</span></button>
+    <button class="alert-row" onclick="quickFilter('warning')"><span class="a-dot" style="background:var(--warning)"></span><span class="a-label">Warning</span><span class="a-count" id="sb-warning" style="color:var(--warning)">0</span></button>
+    <button class="alert-row" onclick="quickFilter('safe')"><span class="a-dot" style="background:var(--safe)"></span><span class="a-label">Safe</span><span class="a-count" id="sb-safe" style="color:var(--safe)">0</span></button>
+
+    <div class="py-note">🐍 Python Detection Engine<br>powered by Pyodide</div>
+    <button class="add-btn" onclick="openForm()">+ Add Product</button>
+  </aside>
+
+  <!-- Content -->
+  <div class="content">
+    <!-- Topbar (mobile) -->
+    <div class="topbar">
+      <button class="icon-btn" onclick="openSidebar()">☰</button>
+      <span class="topbar-logo">PEAMS</span>
+      <button class="topbar-add" onclick="openForm()">+</button>
+    </div>
+
+    <main>
+      <div id="view-dashboard" class="page"></div>
+      <div id="view-list" class="page" style="display:none"></div>
+    </main>
+  </div>
+</div>
+
+<!-- Mobile Detail Drawer -->
+<div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+<div class="drawer" id="detail-drawer">
+  <div class="drawer-handle"></div>
+  <button class="drawer-close" onclick="closeDrawer()">✕</button>
+  <div id="drawer-content"></div>
+</div>
+
+<!-- Form Modal -->
+<div class="modal-overlay" id="modal-overlay" onclick="if(event.target===this)closeForm()">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title" id="form-title">Add Product</div>
+      <button class="icon-btn" onclick="closeForm()">✕</button>
+    </div>
+    <div class="form-grid">
+      <div><label class="f-label">Product Name *</label><input class="f-inp" id="f-name" placeholder="e.g. Aspirin 500mg"></div>
+      <div><label class="f-label">Category</label>
+        <select class="f-inp" id="f-cat">
+          <option>Food & Beverage</option><option>Medicine</option><option>Cosmetics</option><option>Electronics</option><option>Other</option>
+        </select>
+      </div>
+      <div><label class="f-label">Quantity *</label><input class="f-inp" id="f-qty" type="number" placeholder="0"></div>
+      <div><label class="f-label">Unit</label><input class="f-inp" id="f-unit" placeholder="tablets/liters"></div>
+      <div><label class="f-label">Expiry Date *</label><input class="f-inp" id="f-expiry" type="date"></div>
+      <div><label class="f-label">Alert Threshold</label>
+        <select class="f-inp" id="f-thresh">
+          <option value="7">7 days</option><option value="14" selected>14 days</option>
+          <option value="30">30 days</option><option value="60">60 days</option><option value="90">90 days</option>
+        </select>
+      </div>
+      <div style="grid-column:1/-1"><label class="f-label">Notes</label><textarea class="f-inp" id="f-notes" placeholder="Optional notes…"></textarea></div>
+    </div>
+    <div class="modal-actions">
+      <button class="cancel-btn" onclick="closeForm()">Cancel</button>
+      <button class="save-btn" onclick="saveProduct()">Save Product</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// PYTHON ENGINE
+// ═══════════════════════════════════════════════════════
+const PY = `
+import json
+from datetime import date, datetime
+
+def days_until_expiry(expiry_date_str):
+    today = date.today()
+    expiry = datetime.strptime(expiry_date_str, "%Y-%m-%d").date()
+    return (expiry - today).days
+
+def classify_status(days):
+    if days < 0:   return "expired"
+    if days <= 7:  return "critical"
+    if days <= 30: return "warning"
+    return "safe"
+
+def compute_alert_level(days, threshold):
+    if days < 0: return "overdue"
+    pct = (days / threshold * 100) if threshold > 0 else 0
+    if pct <= 0:   return "zero"
+    if pct <= 25:  return "urgent"
+    if pct <= 75:  return "moderate"
+    return "comfortable"
+
+def enrich(product):
+    days = days_until_expiry(product["expiry_date"])
+    status = classify_status(days)
+    threshold = product.get("alert_threshold", 30)
+    pct = max(0.0, min(100.0, (days / threshold * 100))) if threshold else 0.0
+    label = (f"{abs(days)}d overdue" if days < 0 else ("Expires today!" if days == 0 else f"{days}d left"))
+    return {**product, "days": days, "status": status, "alert_level": compute_alert_level(days, threshold), "pct": round(pct,1), "label": label}
+
+def compute_stats(products):
+    r = {"total": len(products), "expired": 0, "critical": 0, "warning": 0, "safe": 0}
+    for p in products:
+        r[classify_status(days_until_expiry(p["expiry_date"]))] += 1
+    return r
+
+def filter_sort(products, status_filter, search, sort_by):
+    out = [enrich(p) for p in products]
+    if status_filter != "all":
+        out = [p for p in out if p["status"] == status_filter]
+    q = search.lower().strip()
+    if q:
+        out = [p for p in out if q in p["name"].lower() or q in p["category"].lower() or q in p.get("notes","").lower()]
+    if sort_by == "name":     out.sort(key=lambda p: p["name"].lower())
+    elif sort_by == "category": out.sort(key=lambda p: p["category"].lower())
+    else: out.sort(key=lambda p: p["days"])
+    return out
+
+def js_stats(j):    return json.dumps(compute_stats(json.loads(j)))
+def js_filter(j,f,s,o): return json.dumps(filter_sort(json.loads(j),f,s,o))
+def js_enrich(j):   return json.dumps([enrich(p) for p in json.loads(j)])
+print("🐍 Python ready.")
 `;
+
+// ═══════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════
+let py, products = [], view = "dashboard", filter = "all", search = "", sort = "expiry", selId = null, editId = null, nextId = 100;
+
+const SAMPLE = [
+  {id:"1",name:"Aspirin 500mg",category:"Medicine",quantity:50,unit:"tablets",expiry_date:"2025-03-10",alert_threshold:30,notes:"Pain relief",created:Date.now()},
+  {id:"2",name:"Orange Juice",category:"Food & Beverage",quantity:2,unit:"liters",expiry_date:"2026-03-05",alert_threshold:7,notes:"",created:Date.now()},
+  {id:"3",name:"Face Cream SPF50",category:"Cosmetics",quantity:1,unit:"jar",expiry_date:"2026-05-20",alert_threshold:30,notes:"Daily moisturizer",created:Date.now()},
+  {id:"4",name:"Amoxicillin 250mg",category:"Medicine",quantity:20,unit:"capsules",expiry_date:"2025-02-15",alert_threshold:14,notes:"Antibiotic course",created:Date.now()},
+  {id:"5",name:"Whole Milk",category:"Food & Beverage",quantity:1,unit:"gallon",expiry_date:"2026-03-03",alert_threshold:7,notes:"",created:Date.now()},
+  {id:"6",name:"Sunscreen SPF100",category:"Cosmetics",quantity:2,unit:"bottles",expiry_date:"2025-03-25",alert_threshold:30,notes:"Sport formula",created:Date.now()},
+  {id:"7",name:"Vitamin D3",category:"Medicine",quantity:90,unit:"softgels",expiry_date:"2026-09-01",alert_threshold:30,notes:"",created:Date.now()},
+];
+
+const SC = {
+  expired: {label:"Expired", color:"#FF2D55",bg:"rgba(255,45,85,.10)",  border:"rgba(255,45,85,.30)",  icon:"☠"},
+  critical:{label:"Critical",color:"#FF6B35",bg:"rgba(255,107,53,.10)", border:"rgba(255,107,53,.30)", icon:"⚠"},
+  warning: {label:"Warning", color:"#FFD60A",bg:"rgba(255,214,10,.10)", border:"rgba(255,214,10,.30)", icon:"⏳"},
+  safe:    {label:"Safe",    color:"#30D158",bg:"rgba(48,209,88,.10)",  border:"rgba(48,209,88,.30)",  icon:"✓"},
+};
+
+// ═══════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════
+const esc = s => JSON.stringify(s).replace(/'/g,"\\'");
+function pyStats()         { return JSON.parse(py.runPython(`js_stats('${esc(products)}')`)); }
+function pyFilter()        { return JSON.parse(py.runPython(`js_filter('${esc(products)}','${filter}','${search.replace(/'/g,"\\'")}','${sort}')`)); }
+function pyEnrichOne(p)    { return JSON.parse(py.runPython(`js_enrich('${esc([p])}')`))[0]; }
+function save()            { try{localStorage.setItem("peams2",JSON.stringify(products));}catch{} }
+
+// ═══════════════════════════════════════════════════════
+// NOTIFICATIONS
+// ═══════════════════════════════════════════════════════
+let toastTimer;
+function toast(msg,type="ok"){
+  const el=document.getElementById("toast");
+  el.textContent=msg; el.style.background=type==="err"?"#FF2D55":"#30D158";
+  el.classList.add("show"); clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove("show"),3000);
+}
+
+// ═══════════════════════════════════════════════════════
+// SIDEBAR
+// ═══════════════════════════════════════════════════════
+function openSidebar() { document.getElementById("sidebar").classList.add("open"); document.getElementById("mob-overlay").classList.add("show"); }
+function closeSidebar(){ document.getElementById("sidebar").classList.remove("open"); document.getElementById("mob-overlay").classList.remove("show"); }
+
+// ═══════════════════════════════════════════════════════
+// VIEW SWITCH
+// ═══════════════════════════════════════════════════════
+function switchView(v) {
+  view=v; closeSidebar();
+  document.querySelectorAll(".nav-btn").forEach(b=>b.classList.toggle("active",b.dataset.v===v));
+  document.getElementById("view-dashboard").style.display=v==="dashboard"?"":"none";
+  document.getElementById("view-list").style.display=v==="list"?"":"none";
+  render();
+}
+function quickFilter(f){ filter=f; switchView("list"); }
+
+// ═══════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════
+function render(){
+  const stats=pyStats();
+  ["expired","critical","warning","safe"].forEach(k=>document.getElementById("sb-"+k).textContent=stats[k]);
+  if(view==="dashboard") renderDash(stats);
+  if(view==="list")      renderList();
+}
+
+// ── Dashboard ────────────────────────────────────────
+function renderDash(stats){
+  const rows = JSON.parse(py.runPython(`js_filter('${esc(products)}','all','','expiry')`));
+  const dateStr = new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"});
+  const cards = [
+    {l:"Total",v:stats.total,c:"#A0A9C0",i:"📦"},
+    {l:"Expired",v:stats.expired,c:SC.expired.color,i:"☠"},
+    {l:"Critical ≤7d",v:stats.critical,c:SC.critical.color,i:"⚠"},
+    {l:"Warning ≤30d",v:stats.warning,c:SC.warning.color,i:"⏳"},
+    {l:"Safe",v:stats.safe,c:SC.safe.color,i:"✓"},
+  ].map(x=>`
+    <div class="stat-card" style="border-color:${x.c}30">
+      <div style="font-size:20px">${x.i}</div>
+      <div class="stat-val" style="color:${x.c}">${x.v}</div>
+      <div class="stat-lbl">${x.l}</div>
+      <div class="stat-bar-bg"><div class="stat-bar-fill" style="background:${x.c};width:${Math.min(100,x.v*14)}%"></div></div>
+    </div>`).join("");
+
+  const trows = rows.map(p=>{
+    const c=SC[p.status];
+    return `<tr class="trow" onclick="selAndDash('${p.id}')">
+      <td><strong>${p.name}</strong></td>
+      <td><span class="cat-badge">${p.category}</span></td>
+      <td>${p.quantity} ${p.unit}</td>
+      <td>${new Date(p.expiry_date).toLocaleDateString()}</td>
+      <td><span class="chip" style="color:${c.color};background:${c.bg}">${p.label}</span></td>
+      <td><span class="s-badge" style="color:${c.color};background:${c.bg};border-color:${c.border}">${c.icon} ${c.label}</span></td>
+    </tr>`;
+  }).join("");
+
+  document.getElementById("view-dashboard").innerHTML=`
+    <div class="py-engine">🐍 Python engine active · <em>classify_status()</em> · <em>compute_stats()</em> · <em>days_until_expiry()</em></div>
+    <div class="page-title">Dashboard</div>
+    <div class="page-sub">${dateStr}</div>
+    <div class="stats-grid">${cards}</div>
+    <div class="sec-title">Upcoming Expirations — sorted by Python</div>
+    <div class="table-wrap"><div class="tbl-scroll">
+      <table><thead><tr>${["Product","Category","Qty","Expiry","Days Left","Status"].map(h=>`<th>${h}</th>`).join("")}</tr></thead>
+      <tbody>${trows}</tbody></table>
+    </div></div>`;
+}
+
+function selAndDash(id){ selId=id; switchView("list"); }
+
+// ── List ─────────────────────────────────────────────
+function renderList(){
+  const filtered = pyFilter();
+  const isMob = window.innerWidth < 900;
+
+  const filterBtns = ["all","expired","critical","warning","safe"].map(f=>{
+    const a=filter===f,c=SC[f];
+    return `<button class="filter-btn ${a?"active":""}" style="${a?`background:${c?.color||"#4F8EF7"};border-color:transparent`:""}"
+      onclick="setFilter('${f}')">${f==="all"?"All":c.label}</button>`;
+  }).join("");
+
+  const cards = filtered.length===0
+    ? `<div class="empty">No products match this filter.</div>`
+    : filtered.map(p=>{
+        const c=SC[p.status],sel=p.id===selId;
+        return `<div class="pcard ${sel?"selected":""}" style="border-color:${sel?"#4F8EF7":c.color+"28"}" onclick="selectProd('${p.id}')">
+          <div class="card-bar" style="background:${c.color}"></div>
+          <div class="card-body">
+            <div class="card-top">
+              <div style="flex:1;min-width:0">
+                <div class="card-name">${p.name}</div>
+                <div class="card-meta">${p.category} · ${p.quantity} ${p.unit}</div>
+              </div>
+              <span class="s-badge" style="color:${c.color};background:${c.bg};border-color:${c.border};font-size:11px;flex-shrink:0">${c.icon} ${c.label}</span>
+            </div>
+            <div class="card-btm">
+              <span class="card-date">📅 ${new Date(p.expiry_date).toLocaleDateString()}</span>
+              <span class="chip" style="color:${c.color};background:${c.bg};font-size:11px">${p.label}</span>
+            </div>
+          </div>
+        </div>`;
+      }).join("");
+
+  const selProd = selId ? products.find(x=>x.id===selId) : null;
+  const enriched = selProd ? pyEnrichOne(selProd) : null;
+  const detailHTML = enriched ? detailContent(enriched) : "";
+
+  document.getElementById("view-list").innerHTML=`
+    <div class="py-engine">🐍 filter_sort() · classify_status() · enrich() running in Python</div>
+    <div class="page-title">Products</div>
+    <div class="page-sub">${filtered.length} item${filtered.length!==1?"s":""} shown</div>
+    <div class="controls">
+      <input class="search-inp" placeholder="🔍  Search products…" value="${search.replace(/"/g,'&quot;')}" oninput="search=this.value;render()">
+      <div class="filter-group">${filterBtns}</div>
+      <select class="sort-sel" onchange="sort=this.value;render()">
+        <option value="expiry" ${sort==="expiry"?"selected":""}>↑ Expiry Date</option>
+        <option value="name"   ${sort==="name"  ?"selected":""}>A–Z Name</option>
+        <option value="category"${sort==="category"?"selected":""}>Category</option>
+      </select>
+    </div>
+    <div class="list-layout">
+      <div class="product-list">${cards}</div>
+      ${!isMob && enriched ? `<div class="detail-panel">${detailHTML}</div>` : ""}
+    </div>`;
+
+  // Mobile drawer
+  if(isMob && enriched){
+    document.getElementById("drawer-content").innerHTML=detailHTML;
+    document.getElementById("detail-drawer").classList.add("show");
+    document.getElementById("drawer-overlay").classList.add("show");
+  }
+}
+
+function setFilter(f){ filter=f; render(); }
+
+function selectProd(id){
+  selId = selId===id ? null : id;
+  closeDrawer();
+  render();
+}
+
+function closeDrawer(){
+  document.getElementById("detail-drawer").classList.remove("show");
+  document.getElementById("drawer-overlay").classList.remove("show");
+}
+
+function detailContent(p){
+  const c=SC[p.status],abs=Math.abs(p.days);
+  const fields=[["Category",p.category],["Quantity",`${p.quantity} ${p.unit}`],
+    ["Expiry",new Date(p.expiry_date).toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"})],
+    ["Alert Threshold",`${p.alert_threshold} days`],
+    ["Python fn",`classify_status(${p.days}) → ${p.status}`],
+    ...(p.notes?[["Notes",p.notes]]:[])
+  ].map(([l,v])=>`<div><div class="d-field-lbl">${l}</div><div class="d-field-val">${v}</div></div>`).join("");
+
+  return `
+    <div class="d-header" style="border-color:${c.color}">
+      <div class="d-status" style="color:${c.color};background:${c.bg}">
+        <div class="d-icon">${c.icon}</div>
+        <div><div class="d-lbl">STATUS</div><div class="d-val">${c.label}</div></div>
+      </div>
+      <div class="d-days" style="color:${c.color}">${abs}<span class="d-days-unit">${p.days<0?"overdue":"days left"}</span></div>
+    </div>
+    <div class="d-name">${p.name}</div>
+    <div class="d-fields">${fields}</div>
+    <div>
+      <div style="font-size:10px;color:var(--muted);margin-bottom:8px">Time remaining (${p.alert_threshold}d window)</div>
+      <div class="prog-bg"><div class="prog-fill" style="width:${p.pct}%;background:${c.color}"></div></div>
+    </div>
+    <div class="d-actions">
+      <button class="edit-btn" onclick="openForm('${p.id}')">Edit</button>
+      <button class="del-btn" onclick="deleteProd('${p.id}')">Delete</button>
+    </div>`;
+}
+
+// ═══════════════════════════════════════════════════════
+// CRUD
+// ═══════════════════════════════════════════════════════
+function deleteProd(id){
+  products=products.filter(p=>p.id!==id);
+  if(selId===id){ selId=null; closeDrawer(); }
+  save(); toast("Product removed","err"); render();
+}
+
+function openForm(id=null){
+  editId=id;
+  const p=id?products.find(x=>x.id===id):null;
+  document.getElementById("form-title").textContent=p?"Edit Product":"Add Product";
+  document.getElementById("f-name").value=p?.name||"";
+  document.getElementById("f-cat").value=p?.category||"Food & Beverage";
+  document.getElementById("f-qty").value=p?.quantity||"";
+  document.getElementById("f-unit").value=p?.unit||"units";
+  document.getElementById("f-expiry").value=p?.expiry_date||"";
+  document.getElementById("f-thresh").value=p?.alert_threshold||14;
+  document.getElementById("f-notes").value=p?.notes||"";
+  document.getElementById("modal-overlay").classList.add("show");
+  closeSidebar();
+}
+function closeForm(){ document.getElementById("modal-overlay").classList.remove("show"); editId=null; }
+function saveProduct(){
+  const name=document.getElementById("f-name").value.trim();
+  const qty =document.getElementById("f-qty").value;
+  const exp =document.getElementById("f-expiry").value;
+  if(!name||!qty||!exp){alert("Fill in Name, Quantity, and Expiry Date.");return;}
+  const data={
+    id:editId||String(++nextId), name,
+    category:document.getElementById("f-cat").value,
+    quantity:Number(qty),
+    unit:document.getElementById("f-unit").value||"units",
+    expiry_date:exp,
+    alert_threshold:Number(document.getElementById("f-thresh").value),
+    notes:document.getElementById("f-notes").value.trim(),
+    created:editId?products.find(p=>p.id===editId)?.created:Date.now(),
+  };
+  products=editId?products.map(p=>p.id===editId?data:p):[...products,data];
+  save(); closeForm(); toast(editId?"Product updated ✓":"Product added ✓"); render();
+}
+
+// ═══════════════════════════════════════════════════════
+// RE-RENDER ON RESIZE
+// ═══════════════════════════════════════════════════════
+let resizeTimer;
+window.addEventListener("resize",()=>{ clearTimeout(resizeTimer); resizeTimer=setTimeout(render,200); });
+
+// ═══════════════════════════════════════════════════════
+// BOOT
+// ═══════════════════════════════════════════════════════
+async function init(){
+  py = await loadPyodide();
+  await py.runPythonAsync(PY);
+  try{ const s=localStorage.getItem("peams2"); products=s?JSON.parse(s):SAMPLE; }
+  catch{ products=SAMPLE; }
+  document.getElementById("loader").style.display="none";
+  document.getElementById("app").classList.add("ready");
+  render();
+}
+init().catch(e=>{
+  document.getElementById("loader").innerHTML=`<div style="color:#FF2D55;font-size:13px;text-align:center;padding:40px;font-family:monospace">⚠ Failed to load Python engine.<br><small>${e.message}</small></div>`;
+});
+</script>
+</body>
+</html>
